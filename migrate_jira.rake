@@ -978,7 +978,7 @@ namespace :jira_migration do
       types.each do |key, value|
         t = Tracker.find_by_name(value)
         if t.nil?
-          Tracker.new(name: value)
+          t = Tracker.new(name: value)
         end
         t.save!
         t.reload
