@@ -70,7 +70,13 @@ module JiraMigration
         self.before_save(record)
       end
 
-      record.save!
+      begin
+        record.save!
+      rescue ActiveRecord::RecordInvalid => invalid
+        puts invalid.record.errors
+        puts record.errors.details
+        raise
+      end
       record.reload
 
       self.map[self.jira_id] = record
@@ -618,7 +624,9 @@ module JiraMigration
   end
 
   def self.find_user_by_jira_name(jira_name)
+    #printf("Searching for user %s. ", jira_name) 
     user = $MIGRATED_USERS_BY_NAME[jira_name]
+    #printf("Found %s\n", user)
     if user.nil?
       # User has not been migrated. Probably a user who has been deleted from JIRA.
       # Select or create the ghost user and use him instead.
@@ -775,7 +783,7 @@ module JiraMigration
     #<User id="110" directoryId="1" userName="userName" lowerUserName="username" active="1" createdDate="2013-08-14 13:07:57.734" updatedDate="2013-09-29 21:52:19.776" firstName="firstName" lowerFirstName="firstname" lastName="lastName" lowerLastName="lastname" displayName="User Name" lowerDisplayName="user name" emailAddress="user@mail.org" lowerEmailAddress="user@mail.org" credential="" externalId=""/>
 
     # $doc.elements.each('/*/User') do |node|
-    $doc.xpath('/*/User').each do |node|
+    $doc.xpath('/*/OSUser').each do |node|
       if(node['emailAddress'] =~ /\A([^@\s]+)@((?:[-a-z0-9]+\.)+[a-z]{2,})\z/i)
         if !node['firstName'].to_s.empty? and !node['lastName'].to_s.empty? 
 		  user = JiraUser.new(node)
@@ -798,7 +806,7 @@ module JiraMigration
 
     #<Group id="30" groupName="developers" lowerGroupName="developers" active="1" local="0" createdDate="2011-05-08 15:47:01.492" updatedDate="2011-05-08 15:47:01.492" type="GROUP" directoryId="1"/>
 
-    $doc.xpath('/*/Group').each do |node|
+    $doc.xpath('/*/OSGroup').each do |node|
          group = JiraGroup.new(node)
 
           groups.push(group)
@@ -938,6 +946,7 @@ namespace :jira_migration do
     task :migrate_users => [:environment, :pre_conf] do
       users = JiraMigration.parse_jira_users()
       users.each do |u|
+      	puts "Username = " + u.jira_name
         #pp(u)
         user = User.find_by_mail(u.jira_emailAddress)
         if user.nil?
@@ -980,7 +989,7 @@ namespace :jira_migration do
         if t.nil?
           t = Tracker.new(name: value)
         end
-        puts "key/value: " + key + '/' + value
+        printf("%s => %s\n", key, value)
         t.save!
         t.reload
         $MIGRATED_ISSUE_TYPES[key] = t
@@ -997,7 +1006,7 @@ namespace :jira_migration do
         if s.nil?
           s = IssueStatus.new(name: value)
         end
-        puts "key/value: " + key + '/' + value
+        printf("%s => %s\n", key, value)
 		s.save!
         s.reload
         $MIGRATED_ISSUE_STATUS[key] = s
@@ -1015,7 +1024,7 @@ namespace :jira_migration do
         if p.nil?
           p = IssuePriority.new(name: value)
         end
-        puts "key/value: " + key + '/' + value
+        printf("%s => %s\n", key, value)
         p.save!
         p.reload
         $MIGRATED_ISSUE_PRIORITIES[key] = p
@@ -1045,7 +1054,19 @@ namespace :jira_migration do
       issues = JiraMigration.parse_issues()
       issues.reject!{|issue|issue.red_project.nil?}
       issues.each do |i|
+        printf("%-12s | %24s => %-24s | %-16s | %-16s | ",
+          i.jira_key,
+          $MIGRATED_ISSUE_TYPES_BY_ID[i.jira_type],
+          i.red_tracker,
+          ( i.jira_reporter.nil? && '-' || i.jira_reporter.to_s ),
+          ( i.jira_assignee.nil? && '-' || i.jira_assignee.to_s )
+        )
         i.migrate
+        if i.is_new
+          puts 'created'
+        else
+          puts 'exists'
+        end	
       end
 
       JiraMigration.migrate_fixed_versions
