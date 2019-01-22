@@ -974,15 +974,13 @@ namespace :jira_migration do
     task :migrate_issue_types => [:environment, :pre_conf] do
 
       JiraMigration.get_jira_issue_types()
-      puts "Issue types:"
       types = $confs["types"]
       types.each do |key, value|
         t = Tracker.find_by_name(value)
         if t.nil?
           t = Tracker.new(name: value)
         end
-        puts "key: " + key
-        puts "value: " + value
+        puts "key/value: " + key + '/' + value
         t.save!
         t.reload
         $MIGRATED_ISSUE_TYPES[key] = t
@@ -999,6 +997,7 @@ namespace :jira_migration do
         if s.nil?
           s = IssueStatus.new(name: value)
         end
+        puts "key/value: " + key + '/' + value
 		s.save!
         s.reload
         $MIGRATED_ISSUE_STATUS[key] = s
@@ -1016,8 +1015,7 @@ namespace :jira_migration do
         if p.nil?
           p = IssuePriority.new(name: value)
         end
-		puts "key: " + key
-		puts "value: " + value
+        puts "key/value: " + key + '/' + value
         p.save!
         p.reload
         $MIGRATED_ISSUE_PRIORITIES[key] = p
