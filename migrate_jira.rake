@@ -970,16 +970,19 @@ namespace :jira_migration do
 
     end
 
-    desc "Migrates Jira Issue Types to Redmine Trackes"
+    desc "Migrates Jira Issue Types to Redmine Trackers"
     task :migrate_issue_types => [:environment, :pre_conf] do
 
       JiraMigration.get_jira_issue_types()
+      puts "Issue types:"
       types = $confs["types"]
       types.each do |key, value|
         t = Tracker.find_by_name(value)
         if t.nil?
           t = Tracker.new(name: value)
         end
+        puts "key: " + key
+        puts "value: " + value
         t.save!
         t.reload
         $MIGRATED_ISSUE_TYPES[key] = t
