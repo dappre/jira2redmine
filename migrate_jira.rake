@@ -851,13 +851,27 @@ module JiraMigration
   end
 
   def self.parse_issues()
+  	nodes = []
     ret = []
 
     # $doc.elements.collect('/*/Issue'){|i|i}.sort{|a,b|a.attribute('key').to_s<=>b.attribute('key').to_s}.each do |node|
-    $doc.xpath('/*/Issue').collect{|i|i}.sort{|a,b|a.attribute('key').to_s<=>b.attribute('key').to_s}.each do |node|
-      issue = JiraIssue.new(node)
-      ret.push(issue)
-    end
+    nodes = $doc.xpath('/*/Issue').collect{|i|i}.sort{|a,b|a.attribute('id').to_s<=>b.attribute('id').to_s}
+    # Process only relevant issues
+    nodes.reject!{|i|$IGNORED_PROJECTS.include?($MAP_PROJECT_ID_TO_PROJECT_KEY[i["project"]])}
+    nodes.each do |node|
+    # If nedded, look for CDATA formatted summary in children
+	  if node['summary'].to_s.empty?
+	  	begin
+	      node['summary'] = node.at_xpath('summary').text.gsub(/\n+/, "\s")
+        rescue Exception => e
+          puts "FAILED extracting summary from #{node['key']} because of #{e.message}"
+	      # generate a summary if needed, as it can not be empty
+	  	  node['summary'] = node['key'] + " migrated without summary"
+	  	end
+	  end
+	  issue = JiraIssue.new(node)
+	  ret.push(issue)
+	end
     return ret
   end
 
@@ -1054,7 +1068,7 @@ namespace :jira_migration do
       issues = JiraMigration.parse_issues()
       issues.reject!{|issue|issue.red_project.nil?}
       issues.each do |i|
-        printf("%-12s | %24s => %-24s | %-16s | %-16s | ",
+        printf("%-12s | %24s => %-24s | %-24s | %-24s | ",
           i.jira_key,
           $MIGRATED_ISSUE_TYPES_BY_ID[i.jira_type],
           i.red_tracker,
@@ -1132,9 +1146,10 @@ namespace :jira_migration do
     task :test_all_migrations => [:environment, :pre_conf,
                                   :test_parse_projects,
                                   :test_parse_users,
-                                  :test_parse_comments,
                                   :test_parse_issues,
-                                  :test_parse_attachments] do
+                                  :test_parse_comments,
+                                  :test_parse_attachments
+                                  ] do
       puts "All parsers was run! :-)"
     end
 
