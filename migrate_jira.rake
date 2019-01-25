@@ -18,6 +18,10 @@ module JiraMigration
   JIRA_ATTACHMENTS_DIR = 'data/attachments'
   ############## Jira URL
   $JIRA_WEB_URL = 'https://company.atlassian.net'
+  ############## Project filter (ex: 'Test' or '(Test|Demo)'
+  $JIRA_PRJ_FILTER = nil
+  ############## Issue key filter (ex: '[^-]+-\d{1,2}' or '(MYPRJA-\d+|MYPRJB-\d{1,2})'
+  $JIRA_KEY_FILTER = nil
 
 
   class BaseJira
@@ -566,9 +570,6 @@ module JiraMigration
   # This user is lazily migrated only if needed.
   $GHOST_USER = nil
 
-  # Jira projects to ignore during import
-  $IGNORED_PROJECTS = ['Demo', 'Test']
-
   # Mapping between Jira Issue Type and Jira Issue Type Id - key = Id, value = Type
   $MIGRATED_ISSUE_TYPES_BY_ID = {}
   # Mapping between Jira Issue Status and Jira Issue Status Id - key = Id, value = Status
@@ -849,8 +850,10 @@ module JiraMigration
       projs.push(proj)
     end
 
-    # Reject ignored projects
-    projs.reject!{|proj|$IGNORED_PROJECTS.include?(proj.jira_key)}
+    # Filter projects if required
+    if !$JIRA_PRJ_FILTER.nil?
+      projs.delete_if{|proj| proj.jira_key !~ /^#{$JIRA_PRJ_FILTER}$/ }
+    end
 
     return projs
   end
@@ -872,7 +875,13 @@ module JiraMigration
     # $doc.elements.collect('/*/Issue'){|i|i}.sort{|a,b|a.attribute('key').to_s<=>b.attribute('key').to_s}.each do |node|
     nodes = $doc.xpath('/*/Issue').collect{|i|i}.sort{|a,b|a.attribute('id').to_s<=>b.attribute('id').to_s}
     # Process only relevant issues
-    nodes.reject!{|i|$IGNORED_PROJECTS.include?($MAP_PROJECT_ID_TO_PROJECT_KEY[i["project"]])}
+    if !$JIRA_PRJ_FILTER.nil?
+      nodes.delete_if{|i| i['key'] !~ /^#{$JIRA_PRJ_FILTER}\-\d+$/ }
+    end
+    if !$JIRA_KEY_FILTER.nil?
+      nodes.delete_if{|i| i['key'] !~ /^#{$JIRA_KEY_FILTER}$/ }
+    end
+
     nodes.each do |node|
     # If nedded, look for CDATA formatted summary in children
 	  if node['summary'].to_s.empty?
