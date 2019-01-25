@@ -852,13 +852,6 @@ module JiraMigration
     # Reject ignored projects
     projs.reject!{|proj|$IGNORED_PROJECTS.include?(proj.jira_key)}
 
-    migrated_projects = {}
-    projs.each do |p|
-      #puts "Name and descr.: #{p.red_name} and #{p.red_description}"
-      #puts "identifier: #{p.red_identifier}"
-      migrated_projects[p.jira_id] = p
-    end
-    #puts migrated_projects
     return projs
   end
 
@@ -1071,8 +1064,11 @@ namespace :jira_migration do
     desc "Migrates Jira Projects to Redmine Projects"
     task :migrate_projects => :environment do
       projects = JiraMigration.parse_projects()
+      printf("%-16s | %32s | %16s\n", 'jira_key', 'jira_name', 'id')
       projects.each do |p|
+        printf("%-16s | %32s | ", p.jira_key, p.jira_name)
         p.migrate
+        printf("%16s\n", p.new_record.id)
       end
     end
 
