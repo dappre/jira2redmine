@@ -650,11 +650,28 @@ module JiraMigration
 
     path = "/*/NodeAssociation[@sourceNodeEntity=\"Issue\" and @sinkNodeEntity=\"Version\" and @associationType=\"IssueFixVersion\"]"
     associations = JiraMigration.get_list_from_tag(path)
+
+    printf("%12s | %12s | %-24s | %-12s\n",
+      'issue_jid',
+      'version_jid',
+      'version_name',
+      'issue_rid')
     associations.each do |assoc|
+      # Only process relevant assoc (should be nil if project is ignored)
       version = JiraVersion::MAP[assoc['sinkNodeId']]
-      issue = JiraIssue::MAP[assoc['sourceNodeId']]
-      issue.update_column(:fixed_version_id, version.id)
-      issue.reload
+      if !version.nil?
+    	issue = JiraIssue::MAP[assoc['sourceNodeId']]
+      	if !issue.nil?
+          printf("%12i | %12i | %-24s | %-12s\n",
+            assoc['sinkNodeId'],
+            assoc['sourceNodeId'],
+            version['name'],
+            issue.id
+          )
+          issue.update_column(:fixed_version_id, version.id)
+          issue.reload
+        end
+      end
     end
   end
 
@@ -1058,8 +1075,26 @@ namespace :jira_migration do
     task :migrate_versions => :environment do
       versions = JiraMigration.parse_versions()
       versions.reject!{|version|version.red_project.nil?}
+      printf("%-32s | %12s | %-32s | %-8s | %12s\n",
+        'red_project',
+        'jire_id',
+        'jira_name',
+        'status',
+        'id'
+      )
       versions.each do |i|
+      	printf("%-32s | %12i | %-32s | ",
+      	  i.red_project,
+      	  i.jira_id,
+      	  i.jira_name
+      	)
         i.migrate
+        if i.is_new
+          printf("%-8s | ", 'created')
+        else
+          printf("%-8s | ", 'exists')
+        end
+        printf("%12i\n", i.new_record.id)
       end
     end
 
@@ -1067,6 +1102,15 @@ namespace :jira_migration do
     task :migrate_issues => :environment do
       issues = JiraMigration.parse_issues()
       issues.reject!{|issue|issue.red_project.nil?}
+      printf("%-12s | %24s => %-24s | %-24s | %-24s | %-8s | %12s\n",
+        'jira_key',
+        'jira_type',
+        'red_tracker',
+        'jira_reporter',
+        'jira_assignee',
+        'status',
+        'id'
+      )
       issues.each do |i|
         printf("%-12s | %24s => %-24s | %-24s | %-24s | ",
           i.jira_key,
@@ -1077,10 +1121,11 @@ namespace :jira_migration do
         )
         i.migrate
         if i.is_new
-          puts 'created'
+          printf("%-8s | ", 'created')
         else
-          puts 'exists'
-        end	
+          printf("%-8s | ", 'exists')
+        end
+        printf("%12i\n", i.tag['id'])
       end
 
       JiraMigration.migrate_fixed_versions
