@@ -333,21 +333,22 @@ module JiraMigration
       self.jira_summary
     end
 	
+    # TODO: Reactivate this commented section, but it needs to be faster.
     def red_description
-	  sprints = get_previous_sprints
-	  if (sprints.to_s == '')
-	    dsc = "#{self.jira_marker}\n%s" % @jira_description
-	  else
-	    dsc = "#{self.jira_marker}\n Sprints: #{get_previous_sprints}\n\n%s" % @jira_description 
-      end	
-      return dsc	  
-      #dsc = self.jira_marker + "\n"
-      #if @jira_description
-      #  dsc += @jira_description
-      #else
-      #  dsc += self.red_subject
-      #end
-      #return dsc
+# 	  sprints = get_previous_sprints
+# 	  if (sprints.to_s == '')
+# 	    dsc = "#{self.jira_marker}\n%s" % @jira_description
+# 	  else
+# 	    dsc = "#{self.jira_marker}\n Sprints: #{get_previous_sprints}\n\n%s" % @jira_description 
+#       end	
+#       return dsc	  
+      dsc = self.jira_marker + "\n"
+      if @jira_description
+        dsc += @jira_description
+      else
+        dsc += self.red_subject
+      end
+      return dsc
     end
 
     def red_priority
