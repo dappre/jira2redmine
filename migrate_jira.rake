@@ -59,6 +59,7 @@ module JiraMigration
     def migrate
       all_fields = self.run_all_redmine_fields()
       #pp('Saving:', all_fields)
+
       record = self.retrieve
       if record
         record.update_attributes(all_fields)
@@ -66,6 +67,7 @@ module JiraMigration
         record = self.class::DEST_MODEL.new all_fields
         self.is_new = true
       end
+
       if self.respond_to?('before_save')
         self.before_save(record)
       end
@@ -77,6 +79,7 @@ module JiraMigration
         puts record.errors.details
         raise
       end
+
       record.reload
 
       self.map[self.jira_id] = record
@@ -88,6 +91,7 @@ module JiraMigration
       record.reload
       return record
     end
+
     def retrieve
       self.class::DEST_MODEL.find_by_name(self.jira_id)
     end
@@ -861,8 +865,8 @@ module JiraMigration
     ret = []
     # $doc.elements.each('/*/Action[@type="comment"]') do |node|
     $doc.xpath('/*/Version').each do |node|
-      comment = JiraVersion.new(node)
-      ret.push(comment)
+      version = JiraVersion.new(node)
+      ret.push(version)
     end
     return ret
   end
