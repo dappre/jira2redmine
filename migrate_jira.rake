@@ -712,33 +712,38 @@ module JiraMigration
     issue_link_types.each do |linktype|
       migrated_issue_link_types[linktype['id']] = DEFAULT_ISSUELINK_TYPE_MAP.fetch(linktype['linkname'], ISSUELINK_TYPE_MARKER)
     end
+    pp(migrated_issue_link_types)
 
     # Set Issue Links
     issue_links = self.get_list_from_tag('/*/IssueLink')
+    puts("Collected #{issue_links.length} issue links")
     issue_links.each do |link|
       linktype = migrated_issue_link_types[link['linktype']]
       issue_from = JiraIssue::MAP[link['source']]
       issue_to = JiraIssue::MAP[link['destination']]
-      if linktype.downcase == 'subtask' or linktype.downcase == 'epic-story'
-        pp "Set Parent #{issue_from.id} to:", issue_to
-        to_updated_on = issue_to.updated_on
-        from_updated_on = issue_from.updated_on
-        issue_to.update_attribute(:parent_issue_id, issue_from.id)
-        issue_to.reload
-        issue_to.update_column :updated_on, to_updated_on
-        issue_from.update_column :updated_on, from_updated_on
-        issue_to.reload
-        issue_from.reload
-      else
-        r = IssueRelation.new(:relation_type => linktype, :issue_from => issue_from, :issue_to => issue_to)
-		puts "setting relation between: #{issue_from.id} to: #{issue_to.id}"
-		begin
-			r.save!
-			r.reload
-		rescue Exception => e
-			puts "FAILED setting #{linktype} relation from: #{issue_from.id} to: #{issue_to.id} because of #{e.message}"
+      # Only process relevant links
+      if !issue_from.nil? && !issue_to.nil?
+        if linktype.downcase == 'subtask' || linktype.downcase == 'epic-story'
+          pp "Set Parent #{issue_from.id} to:", issue_to
+          to_updated_on = issue_to.updated_on
+          from_updated_on = issue_from.updated_on
+          issue_to.update_attribute(:parent_issue_id, issue_from.id)
+          issue_to.reload
+          issue_to.update_column :updated_on, to_updated_on
+          issue_from.update_column :updated_on, from_updated_on
+          issue_to.reload
+          issue_from.reload
+        else
+          r = IssueRelation.new(:relation_type => linktype, :issue_from => issue_from, :issue_to => issue_to)
+		  puts "setting relation between: #{issue_from.id} to: #{issue_to.id}"
+		  begin
+		    r.save!
+		    r.reload
+		  rescue Exception => e
+		    puts "FAILED setting #{linktype} relation from: #{issue_from.id} to: #{issue_to.id} because of #{e.message}"
+		  end
+		  puts "After saving the relation"
 		end
-		puts "After saving the relation"
       end
     end
   end
@@ -747,17 +752,19 @@ module JiraMigration
 
     # Set Issue Links
     worklogs = self.get_list_from_tag('/*/Worklog')
+    puts("Collected #{worklogs.length} worklogs")
     worklogs.each do |log|
-
       issue = JiraIssue::MAP[log['issue']]
-      user = JiraMigration.find_user_by_jira_name(log['author'])
-      TimeEntry.create!(:user => user, :issue_id => issue.id, :project_id => issue.project.id,
-                        :hours => (log['timeworked'].to_s.empty? ? 0 : log['timeworked'].to_f / 3600),
-                        :comments => log['body'].to_s.truncate(250, separator: ' '),
-                        :spent_on => Time.parse(log['startdate']),
-                        :created_on => Time.parse(log['created']),
-                        :activity_id => TimeEntryActivity.find_by_name('Development').id)
-
+      # Only process relevant worklogs
+      if !issue.nil?
+        user = JiraMigration.find_user_by_jira_name(log['author'])
+        TimeEntry.create!(:user => user, :issue_id => issue.id, :project_id => issue.project.id,
+                          :hours => (log['timeworked'].to_s.empty? ? 0 : log['timeworked'].to_f / 3600),
+                          :comments => log['body'].to_s.truncate(250, separator: ' '),
+                          :spent_on => Time.parse(log['startdate']),
+                          :created_on => Time.parse(log['created']),
+                          :activity_id => TimeEntryActivity.find_by_name('Development').id)
+      end
     end
   end
 
