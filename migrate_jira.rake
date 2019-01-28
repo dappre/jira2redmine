@@ -453,7 +453,7 @@ module JiraMigration
 
     def before_save(new_record)
       new_record.container = self.red_container
-      pp(new_record)
+      #pp(new_record)
 
       # JIRA stores attachments as follows:
       # <PROJECTKEY>/<PROJECT-ID/<ISSUE-KEY>/<ATTACHMENT_ID>_filename.ext
@@ -464,19 +464,25 @@ module JiraMigration
       project_id = $MAP_ISSUE_TO_PROJECT_KEY[self.jira_issue][:project_id]
       jira_attachment_file = File.join(JIRA_ATTACHMENTS_DIR,
                                        project_key,
-                                       project_id,
+                                       #project_id,
                                        issue_key,
-                                       "#{self.jira_id}")
-      puts "Jira Attachment File: #{jira_attachment_file}"
+                                       "#{self.jira_id}_#{self.jira_filename}"
+                                       )
+      printf("%-16s | %-.64s | ", issue_key, jira_attachment_file)
       if File.exists? jira_attachment_file
-        new_record.file = File.open(jira_attachment_file)
-        puts "Setting attachment #{jira_attachment_file} for record"
-        # redmine_attachment_file = File.join(Attachment.storage_path, new_record.disk_filename)
+      	file_size = File.size(jira_attachment_file)
+      	if file_size < Setting.attachment_max_size.to_i * 1024
+          new_record.file = File.open(jira_attachment_file)
+          printf("%10s | %16s bytes\n", 'processing', file_size.to_s)
+        else
+          printf("%24s | %16s bytes\n", 'skipping - too big', file_size.to_s)
+        end
+        #redmine_attachment_file = File.join(Attachment.storage_path, new_record.disk_filename)
 
         # puts "Copying attachment [#{jira_attachment_file}] to [#{redmine_attachment_file}]"
-        # FileUtils.cp jira_attachment_file, redmine_attachment_file
+        #FileUtils.cp jira_attachment_file, redmine_attachment_file
       else
-        puts "Attachment file [#{jira_attachment_file}] not found. Skipping copy."
+        printf("%24s | %16s\n", 'skipping - not found', '-')
       end
     end
 
@@ -712,7 +718,7 @@ module JiraMigration
     issue_link_types.each do |linktype|
       migrated_issue_link_types[linktype['id']] = DEFAULT_ISSUELINK_TYPE_MAP.fetch(linktype['linkname'], ISSUELINK_TYPE_MARKER)
     end
-    pp(migrated_issue_link_types)
+    #pp(migrated_issue_link_types)
 
     # Set Issue Links
     issue_links = self.get_list_from_tag('/*/IssueLink')
