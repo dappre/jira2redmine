@@ -247,6 +247,34 @@ module JiraMigration
 
   end
 
+  class JiraComponent < BaseJira
+
+    DEST_MODEL = IssueCategory
+    MAP = {}
+
+    def initialize(node_tag)
+      super
+    end
+
+    def red_project
+      # needs to return the Rails Project object
+      JiraProject::MAP[self.jira_project]
+    end
+
+    def red_name
+      JiraMigration.encode(self.jira_name[0, JiraMigration::limit_for(IssueCategory, 'name')])
+    end
+
+    def red_assigned_to_id
+      JiraMigration.find_user_by_jira_name(self.jira_lead)
+    end
+
+    def retrieve
+      self.class::DEST_MODEL.find_by_name(self.jira_name)
+    end
+
+  end
+
   class JiraIssue < BaseJira
 
     DEST_MODEL = Issue
@@ -287,6 +315,18 @@ module JiraMigration
         versions.push(version)
       end
       versions.last
+    end
+
+    def red_category
+      path = "/*/NodeAssociation[@sourceNodeId=\"#{self.jira_id}\" and @sourceNodeEntity=\"Issue\" and @sinkNodeEntity=\"Component\" and @associationType=\"IssueComponent\"]"
+      assocs = JiraMigration.get_list_from_tag(path)
+
+      categories = []
+      assocs.each do |assoc|
+        category = JiraComponent::MAP[assoc["sinkNodeId"]]
+        categories.push(category)
+      end
+      categories.last
     end
 	
 	def get_change_groups_of_issue(issueId)
@@ -613,6 +653,17 @@ module JiraMigration
     return ret
   end
 
+  def self.limit_for(klass, attribute)
+    klass.columns_hash[attribute.to_s].limit
+  end
+
+  def self.encode(text)
+  	if text.nil?
+  	  text = ''
+  	end
+    text.to_s.force_encoding('UTF-8').encode('UTF-8')
+  end
+
   # Get or create Ghost (Dummy) user which will be used for jira issues if no corresponding user found
   def self.use_ghost_user
     ghost = User.find_by_login('deleted-user')
@@ -881,6 +932,17 @@ module JiraMigration
     return ret
   end
 
+  def self.parse_components()
+  	nodes = self.get_list_from_tag('/*/Component')
+    ret = []
+
+  	nodes.each do |component|
+      category = JiraComponent.new(component)
+      ret.push(category)
+  	end
+    return ret
+  end
+
   def self.parse_issues()
   	nodes = []
     ret = []
@@ -1121,6 +1183,33 @@ namespace :jira_migration do
       end
     end
 
+    desc "Migrates Jira Components to Redmine Issue Categories"
+    task :migrate_components => :environment do
+      categories = JiraMigration.parse_components()
+      categories.reject!{|category|category.red_project.nil?}
+      printf("%-32s | %-64s | %-24s | %-8s | %12s\n",
+        'red_project',
+        'red_name',
+        'jira_lead',
+        'status',
+        'id'
+      )
+      categories.each do |c|
+      	printf("%-32s | %-64s | %-24s | ",
+      	  c.red_project,
+      	  c.red_name,
+      	  c.jira_lead
+      	)
+        c.migrate
+        if c.is_new
+          printf("%-8s | ", 'created')
+        else
+          printf("%-8s | ", 'exists')
+        end
+        printf("%12i\n", c.tag['id'])
+     end
+    end
+
     desc "Migrates Jira Issues to Redmine Issues"
     task :migrate_issues => :environment do
       issues = JiraMigration.parse_issues()
@@ -1197,6 +1286,12 @@ namespace :jira_migration do
       comments.each {|c| pp( c.run_all_redmine_fields) }
     end
 
+    desc "Just pretty print Jira Components on screen"
+    task :test_parse_components => :environment do
+      categories = JiraMigration.parse_components()
+      categories.each {|c| pp( c.run_all_redmine_fields) }
+    end
+
     desc "Just pretty print Jira Issues on screen"
     task :test_parse_issues => :environment do
       issues = JiraMigration.parse_issues()
@@ -1214,6 +1309,7 @@ namespace :jira_migration do
     task :test_all_migrations => [:environment, :pre_conf,
                                   :test_parse_projects,
                                   :test_parse_users,
+                                  :test_parse_components,
                                   :test_parse_issues,
                                   :test_parse_comments,
                                   :test_parse_attachments
@@ -1231,6 +1327,7 @@ namespace :jira_migration do
                                 :migrate_versions,
                                 :migrate_users,
                                 :migrate_groups,
+                                :migrate_components,
                                 :migrate_issues,
                                 :migrate_comments,
                                 :migrate_attachments
