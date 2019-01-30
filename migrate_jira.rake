@@ -1244,7 +1244,7 @@ namespace :jira_migration do
     task :migrate_components => :environment do
       categories = JiraMigration.parse_components()
       categories.reject!{|category|category.red_project.nil?}
-      printf("%-32s | %-64s | %-24s | %-8s | %12s\n",
+      printf("%-24.24s | %-64.64s | %-24.24s | %-8s | %12s\n",
         'red_project',
         'red_name',
         'jira_lead',
@@ -1252,7 +1252,7 @@ namespace :jira_migration do
         'id'
       )
       categories.each do |c|
-      	printf("%-32s | %-64s | %-24s | ",
+      	printf("%-24.24s | %-64.64s | %-24.24s | ",
       	  c.red_project,
       	  c.red_name,
       	  c.jira_lead
@@ -1271,7 +1271,7 @@ namespace :jira_migration do
     task :migrate_issues => :environment do
       issues = JiraMigration.parse_issues()
       issues.reject!{|issue|issue.red_project.nil?}
-      printf("%-12s | %24s => %-24s | %-24s | %-24s | %-8s | %12s\n",
+      printf("%-12.12s | %24.24s => %-24.24s | %-24.24s | %-24.24s | %-8s | %12s\n",
         'jira_key',
         'jira_type',
         'red_tracker',
@@ -1281,7 +1281,7 @@ namespace :jira_migration do
         'id'
       )
       issues.each do |i|
-        printf("%-12s | %24s => %-24s | %-24s | %-24s | ",
+        printf("%-12.12s | %24.24s => %-24.24s | %-24.24s | %-24.24s | ",
           i.jira_key,
           $MIGRATED_ISSUE_TYPES_BY_ID[i.jira_type],
           i.red_tracker,
