@@ -45,7 +45,8 @@ module JiraMigration
         return @tag[attr]
       end
       puts "Method missing: #{key}"
-      raise NoMethodError key
+      abort
+      #raise NoMethodError key
     end
 
     def run_all_redmine_fields
@@ -81,6 +82,7 @@ module JiraMigration
       rescue ActiveRecord::RecordInvalid => invalid
         puts invalid.record.errors
         puts record.errors.details
+        pp self
         raise
       end
 
@@ -253,7 +255,7 @@ module JiraMigration
     DEST_MODEL = IssueCategory
     MAP = {}
 
-    def initialize(node_tag)
+    def initialize(node)
       super
     end
 
@@ -284,7 +286,7 @@ module JiraMigration
     attr_reader  :jira_description, :jira_reporter
 
 
-    def initialize(node_tag)
+    def initialize(node)
       super
       if @tag.at('description')
         @jira_description = @tag.at('description').text
@@ -292,8 +294,8 @@ module JiraMigration
       else
         @jira_description = @tag['description']
       end
-      #@jira_description = node_tag['description'].to_s
-      @jira_reporter = node_tag['reporter'].to_s
+      #@jira_description = node['description'].to_s
+      @jira_reporter = node['reporter'].to_s
     end
     def jira_marker
       return "FROM JIRA: \"#{self.jira_key}\":#{$JIRA_WEB_URL}/browse/#{self.jira_key}"
@@ -782,7 +784,7 @@ module JiraMigration
       # Only process relevant links
       if !issue_from.nil? && !issue_to.nil?
         if linktype.downcase == 'subtask' || linktype.downcase == 'epic-story'
-          pp "Set Parent #{issue_from.id} to:", issue_to
+          #pp "Set Parent #{issue_from.id} to:", issue_to
           to_updated_on = issue_to.updated_on
           from_updated_on = issue_from.updated_on
           issue_to.update_attribute(:parent_issue_id, issue_from.id)
@@ -1221,15 +1223,15 @@ namespace :jira_migration do
     task :migrate_versions => :environment do
       versions = JiraMigration.parse_versions()
       versions.reject!{|version|version.red_project.nil?}
-      printf("%-32s | %12s | %-32s | %-8s | %12s\n",
+      printf("%-32.32s | %12s | %-32.32s | %-8s | %12s\n",
         'red_project',
-        'jire_id',
+        'jira_id',
         'jira_name',
         'status',
         'id'
       )
       versions.each do |i|
-      	printf("%-32s | %12i | %-32s | ",
+      	printf("%-32.32s | %12i | %-32.32s | ",
       	  i.red_project,
       	  i.jira_id,
       	  i.jira_name
