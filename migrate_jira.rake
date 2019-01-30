@@ -288,14 +288,18 @@ module JiraMigration
 
     def initialize(node)
       super
+      if @tag.at('summary')
+        @jira_summary = @tag.at('summary').text
+      else
+        @jira_summary = node['summary'].to_s
+      end
       if @tag.at('description')
         @jira_description = @tag.at('description').text
-      #elsif @tag['description']
       else
-        @jira_description = @tag['description']
+        @jira_description = node['description'].to_s
       end
-      #@jira_description = node['description'].to_s
       @jira_reporter = node['reporter'].to_s
+      @jira_assignee = node['assignee'].to_s
     end
     def jira_marker
       return "FROM JIRA: \"#{self.jira_key}\":#{$JIRA_WEB_URL}/browse/#{self.jira_key}"
@@ -999,16 +1003,6 @@ module JiraMigration
     end
 
     nodes.each do |node|
-    # If nedded, look for CDATA formatted summary in children
-	  if node['summary'].to_s.empty?
-	  	begin
-	      node['summary'] = node.at_xpath('summary').text.gsub(/\n+/, "\s")
-        rescue Exception => e
-          puts "FAILED extracting summary from #{node['key']} because of #{e.message}"
-	      # generate a summary if needed, as it can not be empty
-	  	  node['summary'] = node['key'] + " migrated without summary"
-	  	end
-	  end
 	  issue = JiraIssue.new(node)
 	  ret.push(issue)
 	end
