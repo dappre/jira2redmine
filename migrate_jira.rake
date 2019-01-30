@@ -106,10 +106,11 @@ module JiraMigration
     DEST_MODEL = User
     MAP = {}
 
-    attr_accessor  :jira_emailAddress, :jira_name
+    attr_accessor  :jira_emailAddress, :jira_name, :jira_firstName, :jira_lastName
 
     def initialize(node)
       super
+      @jira_name = node['name'].to_s
     end
 
     def retrieve
@@ -870,15 +871,53 @@ module JiraMigration
     #<User id="110" directoryId="1" userName="userName" lowerUserName="username" active="1" createdDate="2013-08-14 13:07:57.734" updatedDate="2013-09-29 21:52:19.776" firstName="firstName" lowerFirstName="firstname" lastName="lastName" lowerLastName="lastname" displayName="User Name" lowerDisplayName="user name" emailAddress="user@mail.org" lowerEmailAddress="user@mail.org" credential="" externalId=""/>
 
     # $doc.elements.each('/*/User') do |node|
-    $doc.xpath('/*/OSUser').each do |node|
+    $doc.xpath('/*/User').each do |node|
       if(node['emailAddress'] =~ /\A([^@\s]+)@((?:[-a-z0-9]+\.)+[a-z]{2,})\z/i)
         if !node['firstName'].to_s.empty? and !node['lastName'].to_s.empty? 
 		  user = JiraUser.new(node)
 		  user.jira_emailAddress = node["lowerEmailAddress"]
 		  user.jira_name = node["lowerUserName"]
 		  user.jira_active = node['active']
+		  #puts "Found JIRA user: #{user.jira_name}"
 		  users.push(user)
-		  puts "Found JIRA user: #{user.jira_name}"
+        end
+      end
+    end
+
+    # Process alternative tag if any
+    entries = $doc.xpath("/*/OSPropertyEntry[@entityName=\"OSUser\"]") # Collect PropertyEntry nodes from XML
+    strings = $doc.xpath("/*/OSPropertyString") unless entries.empty?  # Collect PropertyString nodes from XML if relevant
+    unless strings.empty?# 
+      puts "Found OSProperties: trying to collect OSUsers"
+      $doc.xpath('/*/OSUser').each do |node|                           # Collect OSUser nodes from XML if relevant
+        props = {}
+        user = JiraUser.new(node)
+        #puts "Looking info for user = #{user.jira_id}"
+        entries.select{ |e| e['entityId'] == user.jira_id }.each do |entry|
+          #puts ("Key id = #{entry['id']} / value = #{entry['propertyKey']}")
+          string = strings.select{ |i| i['id'] == entry['id'] }.last()
+          props[entry['propertyKey']] = string['value'] unless string.nil?
+        end
+        #pp user
+        #pp props
+        unless props['email'].nil? || props['email'] !~ /\A([^@\s]+)@((?:[-a-z0-9]+\.)+[a-z]{2,})\z/i
+          user.jira_emailAddress = props['email']
+          if props['fullName'].nil?
+            user.jira_firstName = 'unknown'
+            user.jira_lastName = 'unknown'
+          else
+            fullName = props['fullName'].split(' ', 2)
+            #pp fullName
+            user.jira_firstName = fullName[0]
+            if fullName.size > 1
+              user.jira_lastName = fullName[1]
+            else
+              user.jira_lastName = 'unknown'
+            end
+          end
+          #pp user
+          #puts "Found JIRA user: #{user.jira_name} | #{user.jira_emailAddress} | #{user.jira_firstName} | #{user.jira_lastName}"
+          users.push(user)
         end
       end
     end
@@ -1058,14 +1097,36 @@ namespace :jira_migration do
     desc "Migrates Jira Users to Redmine Users"
     task :migrate_users => [:environment, :pre_conf] do
       users = JiraMigration.parse_jira_users()
+      printf("%-24.24s | %32.32s | %24.24s | %32.32s | %-8s | %12s\n",
+        'jira_name',
+        'jira_emailAddress',
+        'jira_firstName',
+        'jira_lastName',
+        'status',
+        'id'
+      )
       users.each do |u|
-      	puts "Username = " + u.jira_name
         #pp(u)
-        user = User.find_by_mail(u.jira_emailAddress)
-        if user.nil?
+        printf("%-24.24s | %32.32s | %24.24s | %32.32s | ",
+          u.jira_name,
+          u.jira_emailAddress,
+          u.jira_firstName,
+          u.jira_lastName
+        )
+        # Migrate only non-existing users
+        #user = User.find_by_mail(u.jira_emailAddress)
+        #if user.nil?
           new_user = u.migrate
+          new_user.update_attribute :status, 1
           #new_user.update_attribute :must_change_passwd, true
+        #end
+        #pp u
+        if u.is_new
+          printf("%-8s | ", 'created')
+        else
+          printf("%-8s | ", 'exists')
         end
+        printf("%12i\n", u.new_record.id)
       end
 
       puts "Migrated Users"
