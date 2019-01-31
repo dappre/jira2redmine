@@ -1164,35 +1164,6 @@ namespace :jira_migration do
       $confs = YAML.load_file(conf_file)
     end
 
-    desc "Migrates Jira Users to Redmine Users"
-    task :migrate_users => [:environment, :pre_conf] do
-      users = JiraMigration.parse_jira_users()
-      attrs = {
-        'jira_id'            => 12,
-        'jira_name'          => -24,
-        'jira_emailAddress'  => -32,
-        'jira_firstName'     => -24,
-        'jira_lastName'      => -32,
-      }
-      created = JiraMigration.migrate(users, attrs)
-      puts "Migrated users (#{created}/${users.size})"
-    end
-
-    desc "Migrates Jira Group to Redmine Group"
-    task :migrate_groups => [:environment, :pre_conf] do
-      groups = JiraMigration.parse_jira_groups()
-      attrs = {
-        'jira_id'            => 12,
-        'jira_name'          => -24,
-      }
-      created = JiraMigration.migrate(groups, attrs)
-      puts "Migrated groups (#{created}/#{groups.size})"
-
-      JiraMigration.migrate_membership
-      puts "Migrated Membership"
-
-    end
-
     desc "Migrates Jira Issue Types to Redmine Trackers"
     task :migrate_issue_types => [:environment, :pre_conf] do
 
@@ -1256,6 +1227,35 @@ namespace :jira_migration do
       }
       created = JiraMigration.migrate(projects, attrs)
       puts "Migrated projects (#{created}/#{projects.size})"
+    end
+
+    desc "Migrates Jira Users to Redmine Users"
+    task :migrate_users => [:environment, :pre_conf] do
+      users = JiraMigration.parse_jira_users()
+      attrs = {
+        'jira_id'            => 12,
+        'jira_name'          => -24,
+        'jira_emailAddress'  => -32,
+        'jira_firstName'     => -24,
+        'jira_lastName'      => -32,
+      }
+      created = JiraMigration.migrate(users, attrs)
+      puts "Migrated users (#{created}/${users.size})"
+    end
+    
+    desc "Migrates Jira Group to Redmine Group"
+    task :migrate_groups => [:environment, :pre_conf] do
+      groups = JiraMigration.parse_jira_groups()
+      attrs = {
+        'jira_id'            => 12,
+        'jira_name'          => -24,
+      }
+      created = JiraMigration.migrate(groups, attrs)
+      puts "Migrated groups (#{created}/#{groups.size})"
+    
+      JiraMigration.migrate_membership
+      puts "Migrated Membership"
+    
     end
 
     desc "Migrates Jira Versions to Redmine Versions"
@@ -1346,10 +1346,10 @@ namespace :jira_migration do
       groups.each {|g| pp( g.run_all_redmine_fields) }
     end
 
-    desc "Just pretty print Jira Comments on screen"
-    task :test_parse_comments => :environment do
-      comments = JiraMigration.parse_comments()
-      comments.each {|c| pp( c.run_all_redmine_fields) }
+    desc "Just pretty print Jira Versions on screen"
+    task :test_parse_versions => :environment do
+      versions = JiraMigration.parse_versions()
+      versions.each {|c| pp( c.run_all_redmine_fields) }
     end
 
     desc "Just pretty print Jira Components on screen"
@@ -1364,6 +1364,12 @@ namespace :jira_migration do
       issues.each {|i| pp( i.run_all_redmine_fields) }
     end
 
+    desc "Just pretty print Jira Comments on screen"
+    task :test_parse_comments => :environment do
+      comments = JiraMigration.parse_comments()
+      comments.each {|c| pp( c.run_all_redmine_fields) }
+    end
+
     desc "Just pretty print Jira Attachments on screen"
     task :test_parse_attachments => :environment do
       attachments = JiraMigration.parse_attachments()
@@ -1376,12 +1382,13 @@ namespace :jira_migration do
                                   :test_parse_projects,
                                   :test_parse_users,
                                   :test_parse_groups,
+                                  :test_parse_versions,
                                   :test_parse_components,
                                   :test_parse_issues,
                                   :test_parse_comments,
                                   :test_parse_attachments
                                   ] do
-      puts "All parsers was run! :-)"
+      puts "All parsers done! :-)"
     end
 
     ##################################### Running all tasks ##########################################
@@ -1391,9 +1398,9 @@ namespace :jira_migration do
                                 :migrate_issue_status,
                                 :migrate_issue_priorities,
                                 :migrate_projects,
-                                :migrate_versions,
                                 :migrate_users,
                                 :migrate_groups,
+                                :migrate_versions,
                                 :migrate_components,
                                 :migrate_issues,
                                 :migrate_comments,
