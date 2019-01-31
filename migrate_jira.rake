@@ -1310,7 +1310,7 @@ namespace :jira_migration do
       'jira_lastName'      => -32,
     }
     created = JiraMigration.migrate(users, attrs)
-    puts "Migrated users (#{created}/${users.size})"
+    puts "Migrated users (#{created}/#{users.size})"
   end
 
   ###########################################
