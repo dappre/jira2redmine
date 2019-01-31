@@ -816,6 +816,23 @@ module JiraMigration
       end
     end
 
+    memberships = self.get_list_from_tag('/*/OSMembership')
+
+    memberships.each do |m|
+      user = User.find_by_login(m['userName'])
+      if user.nil? or user == $GHOST_USER
+        users = self.get_list_from_tag("/*/OSUser[@login=\"%s\"]" % m['userName'])
+        if !users.nil? and !users.empty?
+          user = User.find_by_mail(users[0]['emailAddress'])
+        end
+      end
+      group = Group.find_by_lastname(m['groupName'])
+      if !user.nil? and !group.nil?
+        if !group.users.exists?(user.id)
+         group.users << user
+        end
+      end
+    end
   end
 
   ##############################
@@ -1004,7 +1021,6 @@ module JiraMigration
       ret.push(g)
     end
 
-    puts("Collected #{ret.size} groups")
     return ret
   end
 
