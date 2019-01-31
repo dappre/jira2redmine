@@ -9,7 +9,6 @@ require File.expand_path('../../../config/environment', __FILE__) # Assumes that
 module JiraMigration
   include Nokogiri
 
-
   ############## Configuration mapping file. Maps Jira Entities to Redmine Entities. Generated on the first run.
   CONF_FILE = 'map_jira_to_redmine.yml'
   ############## Jira backup main xml file with all data
@@ -23,9 +22,11 @@ module JiraMigration
   ############## Issue key filter (ex: '[^-]+-\d{1,2}' or '(MYPRJA-\d+|MYPRJB-\d{1,2})'
   $JIRA_KEY_FILTER = nil
 
-
+  ################################
+  # Base class for any JIRA object
+  # It handle the default initialization from XML nodes
+  # And the migration of any JIRA object into Redmine based on ActivRecord
   class BaseJira
-
     MAP = {}
 
     attr_reader :tag
@@ -103,8 +104,9 @@ module JiraMigration
     end
   end
 
+  ###############################
+  # Specific class for JIRA users
   class JiraUser < BaseJira
-
     DEST_MODEL = User
     MAP = {}
 
@@ -135,28 +137,34 @@ module JiraMigration
     def red_firstname
       self.jira_firstName
     end
+
     def red_lastname
       self.jira_lastName
     end
+
     def red_mail
       self.jira_emailAddress
     end
+
     def red_login
       self.jira_name
     end
-	def red_status
-	  if (!self.jira_active.nil? && self.jira_active.to_s != '1')
-	    return 3 #locked user
-	  else
-	    return 1 #unlock by default
+
+    def red_status
+  	  if (!self.jira_active.nil? && self.jira_active.to_s != '1')
+  	    return 3 #locked user
+  	  else
+  	    return 1 #unlock by default
+  	  end
 	  end
-	end
-    def before_save(new_record)
+
+	  def before_save(new_record)
       new_record.login = red_login
       if new_record.new_record?
         new_record.salt_password('Pa$$w0rd')
       end
     end
+
     def post_migrate(new_record, is_new)
       if is_new
         new_record.update_attribute(:must_change_passwd, true)
@@ -165,6 +173,8 @@ module JiraMigration
     end
   end
 
+  ################################
+  # Specific class for JIRA groups
   class JiraGroup < BaseJira
     DEST_MODEL = Group
     MAP = {}
@@ -186,6 +196,8 @@ module JiraMigration
     end
   end
 
+  ##################################
+  # Specific class for JIRA projects
   class JiraProject < BaseJira
     DEST_MODEL = Project
     MAP = {}
@@ -194,6 +206,7 @@ module JiraMigration
 
       self.class::DEST_MODEL.find_by_identifier(self.red_identifier)
     end
+
     def post_migrate(new_record, is_new)
       if !new_record.module_enabled?('issue_tracking')
         new_record.enabled_modules << EnabledModule.new(:name => 'issue_tracking')
@@ -211,17 +224,20 @@ module JiraMigration
     def red_name
       self.jira_name
     end
+
     def red_description
       self.jira_name
     end
+
     def red_identifier
       ret = self.jira_key.downcase
       return ret
     end
   end
 
+  ##################################
+  # Specific class for JIRA versions
   class JiraVersion < BaseJira
-
     DEST_MODEL = Version
     MAP = {}
 
@@ -254,6 +270,8 @@ module JiraMigration
 
   end
 
+  ####################################
+  # Specific class for JIRA components (= issue categories in Redmine)
   class JiraComponent < BaseJira
 
     DEST_MODEL = IssueCategory
@@ -279,16 +297,15 @@ module JiraMigration
     def retrieve
       self.class::DEST_MODEL.find_by_name(self.jira_name)
     end
-
   end
 
+  ################################
+  # Specific class for JIRA issues
   class JiraIssue < BaseJira
-
     DEST_MODEL = Issue
     MAP = {}
 
     attr_reader  :jira_description, :jira_reporter
-
 
     def initialize(node)
       super
@@ -305,9 +322,11 @@ module JiraMigration
       @jira_reporter = node['reporter'].to_s
       @jira_assignee = node['assignee'].to_s
     end
+
     def jira_marker
       return "FROM JIRA: \"#{self.jira_key}\":#{$JIRA_WEB_URL}/browse/#{self.jira_key}"
     end
+
     def retrieve
       Issue.where("description Like '#{self.jira_marker}%'").first()
     end
@@ -339,49 +358,46 @@ module JiraMigration
       end
       categories.last
     end
-	
-	def get_change_groups_of_issue(issueId)
-	  path = "/*/ChangeGroup[@issue=\"#{issueId}\"]/@id"
-      groupIdAtts = $doc.xpath(path)
-      groupIds = []
-      groupIdAtts.each do |item|
-        groupIds.push(item.content)
+
+  	def get_change_groups_of_issue(issueId)
+  	  path = "/*/ChangeGroup[@issue=\"#{issueId}\"]/@id"
+        groupIdAtts = $doc.xpath(path)
+        groupIds = []
+        groupIdAtts.each do |item|
+          groupIds.push(item.content)
+        end
+  	  return groupIds
+  	end  
+
+  	def get_sprint_changes_of_specific_group(groupId)
+  	  path = "/*/ChangeItem[@group=\"#{groupId}\" and @fieldtype=\"custom\" and @field=\"Sprint\"]/@newstring"
+  	  sprintAttributes = $doc.xpath(path)
+        sprints = []
+  	  latestSprint = ""
+        sprintAttributes.each do |item|		
+  	    if (item.content.length != 0)
+  		    latestSprint = item.content
+  		  end  
       end
-	  return groupIds
-	end  
-	
-	def get_sprint_changes_of_specific_group(groupId)
-	  path = "/*/ChangeItem[@group=\"#{groupId}\" and @fieldtype=\"custom\" and @field=\"Sprint\"]/@newstring"
-	  sprintAttributes = $doc.xpath(path)
+  	  return latestSprint 
+  	end
+
+  	def get_previous_sprints
+      groupIds = get_change_groups_of_issue(self.jira_id)
       sprints = []
-	  latestSprint = ""
-      sprintAttributes.each do |item|		
-	    if (item.content.length != 0)
-		  latestSprint = item.content
-		end  
+      selected = ""
+      currentSprint = ""
+      groupIds.each do |item|
+        if (item != nil and item.to_s != '')
+          currentSprint = get_sprint_changes_of_specific_group(item)
+          if (currentSprint.length !=0)
+            selected = currentSprint
+          end
+          sprints.push(currentSprint)
+        end
       end
-	  
-	  return latestSprint 
-	end
-	
-	def get_previous_sprints
-	  groupIds = get_change_groups_of_issue(self.jira_id)
-	  sprints = []
-	  selected = ""
-	  currentSprint = ""
-	  groupIds.each do |item|
-	    if (item != nil and item.to_s != '')
-		  currentSprint = get_sprint_changes_of_specific_group(item)
-		  if (currentSprint.length !=0)
-		    selected = currentSprint
-		  end
-		  sprints.push(currentSprint)
-		end  
-	  end
-	  
-	  #puts("This is the jira id: #{self.jira_id} and this is the selected sprint: #{selected} out of: #{sprints}")	  
-	  
-	  return selected
+  	  #puts("This is the jira id: #{self.jira_id} and this is the selected sprint: #{selected} out of: #{sprints}")	  
+  	  return selected
     end
 
     def red_subject
@@ -410,32 +426,41 @@ module JiraMigration
       name = $MIGRATED_ISSUE_PRIORITIES_BY_ID[self.jira_priority]
       return $MIGRATED_ISSUE_PRIORITIES[name]
     end
+
     def red_created_on
       Time.parse(self.jira_created)
     end
+
     def red_updated_on
       Time.parse(self.jira_updated)
     end
+
     def red_estimated_hours
       self.jira_timeestimate.to_s.empty? ? 0 : self.jira_timeestimate.to_f / 3600
     end
+
     # def red_start_date
     #   Time.parse(self.jira_created)
     # end
+
     def red_due_date
       Time.parse(self.jira_resolutiondate) if self.jira_resolutiondate
     end
+
     def red_status
       name = $MIGRATED_ISSUE_STATUS_BY_ID[self.jira_status]
       return $MIGRATED_ISSUE_STATUS[name]
     end
+
     def red_tracker
       type_name = $MIGRATED_ISSUE_TYPES_BY_ID[self.jira_type]
       return $MIGRATED_ISSUE_TYPES[type_name]
     end
+
     def red_author
       JiraMigration.find_user_by_jira_name(self.jira_reporter)
     end
+
     def red_assigned_to
       if self.jira_assignee
         JiraMigration.find_user_by_jira_name(self.jira_assignee)
@@ -443,6 +468,7 @@ module JiraMigration
         nil
       end
     end
+
     def post_migrate(new_record, is_new)
       new_record.update_column :updated_on, Time.parse(self.jira_updated)
       new_record.update_column :created_on, Time.parse(self.jira_created)
@@ -450,8 +476,9 @@ module JiraMigration
     end
   end
 
+  ##################################
+  # Specific class for JIRA comments (= journal in Redmine)
   class JiraComment < BaseJira
-
     DEST_MODEL = Journal
     MAP = {}
 
@@ -466,6 +493,7 @@ module JiraMigration
     def jira_marker
       return "FROM JIRA: #{self.jira_id}"
     end
+
     def retrieve
       Journal.where(notes: "LIKE '#{self.jira_marker}%'").first()
     end
@@ -476,25 +504,30 @@ module JiraMigration
       #self.jira_marker + "\n" + @jira_body
       @jira_body
     end
+
     def red_created_on
       DateTime.parse(self.jira_created)
     end
+
     def red_user
       # retrieving the Rails object
       JiraMigration.find_user_by_jira_name(self.jira_author)
     end
+
     def red_journalized
       # retrieving the Rails object
       JiraIssue::MAP[self.jira_issue]
     end
+
     def post_migrate(new_record, is_new)
       new_record.update_column :created_on, Time.parse(self.jira_created)
       new_record.reload
     end
   end
 
+  #####################################
+  # Specific class for JIRA attachments
   class JiraAttachment < BaseJira
-
     DEST_MODEL = Attachment
     MAP = {}
 
@@ -543,12 +576,15 @@ module JiraMigration
     def red_filename
       self.jira_filename.gsub(/[^\w\.\-]/,'_')  # stole from Redmine: app/model/attachment (methods sanitize_filenanme)
     end
+
     # def red_disk_filename
     #   Attachment.disk_filename(self.jira_issue+self.jira_filename)
     # end
+
     def red_content_type
       self.jira_mimetype.to_s.chomp
     end
+
     # def red_filesize
     #   self.jira_filesize
     # end
@@ -556,17 +592,21 @@ module JiraMigration
     def red_created_on
       DateTime.parse(self.jira_created)
     end
+
     def red_author
       JiraMigration.find_user_by_jira_name(self.jira_author)
     end
+
     def red_container
       JiraIssue::MAP[self.jira_issue]
     end
+
     def post_migrate(new_record, is_new)
       new_record.update_column :created_on, Time.parse(self.jira_created)
       new_record.reload
     end
   end
+
 
   ISSUELINK_TYPE_MARKER = IssueRelation::TYPE_RELATES
   DEFAULT_ISSUELINK_TYPE_MAP = {
@@ -595,6 +635,7 @@ module JiraMigration
       "Custom Issue" => "Support" # A custom issue type, as defined by your organisation if required.
   }
 
+
   ISSUE_STATUS_MARKER = "(choose a Redmine Issue Status)"
   DEFAULT_ISSUE_STATUS_MAP = {
       # Default map from Jira (key) to Redmine (value)
@@ -608,6 +649,7 @@ module JiraMigration
       "Verified" => "Verified"
   }
 
+
   ISSUE_PRIORITY_MARKER = "(choose a Redmine Enumeration Issue Priority)"
   DEFAULT_ISSUE_PRIORITY_MAP = {
       # Default map from Jira (key) to Redmine (value)
@@ -618,7 +660,6 @@ module JiraMigration
       "Minor" => "Normal",      # Indicates that this issue has a relatively minor impact.
       "Trivial" => "Low",       # Lowest priority.
   }
-
 
   # Xml file holder
   $doc = nil
@@ -647,11 +688,10 @@ module JiraMigration
 
   # those maps are for parsing attachments optimisation. My jira xml was huge ~7MB, and parsing it for each attachment lasted for ever.
   # Now needed data are parsed once and put into those maps, which makes all things much faster.
-
   $MAP_ISSUE_TO_PROJECT_KEY = {}
   $MAP_PROJECT_ID_TO_PROJECT_KEY = {}
 
-
+  ##########################
   # gets all mapping options
   def self.get_all_options()
     # return all options 
@@ -664,10 +704,13 @@ module JiraMigration
     return ret
   end
 
+  ###############################################
+  # Return the limit size of an Redmine attribute
   def self.limit_for(klass, attribute)
     klass.columns_hash[attribute.to_s].limit
   end
 
+  #####################
   def self.encode(text)
   	if text.nil?
   	  text = ''
@@ -675,7 +718,9 @@ module JiraMigration
     text.to_s.force_encoding('UTF-8').encode('UTF-8')
   end
 
-  # Get or create Ghost (Dummy) user which will be used for jira issues if no corresponding user found
+  ##################################
+  # Get or create Ghost (Dummy) user
+  # which will be used for jira issues if no corresponding user found
   def self.use_ghost_user
     ghost = User.find_by_login('deleted-user')
     if ghost.nil?
@@ -693,10 +738,11 @@ module JiraMigration
     ghost
   end
 
+  #########################################
   def self.find_version_by_jira_id(jira_id)
-
   end
 
+  ##########################################
   def self.find_user_by_jira_name(jira_name)
     #printf("Searching for user %s. ", jira_name) 
     user = $MIGRATED_USERS_BY_NAME[jira_name]
@@ -709,6 +755,7 @@ module JiraMigration
     user
   end
 
+  #######################################
   def self.get_list_from_tag(xpath_query)
     # Get a tag node and get all attributes as a hash
     ret = []
@@ -720,8 +767,8 @@ module JiraMigration
     return ret
   end
 
+  #################################
   def self.migrate_fixed_versions()
-
     path = "/*/NodeAssociation[@sourceNodeEntity=\"Issue\" and @sinkNodeEntity=\"Version\" and @associationType=\"IssueFixVersion\"]"
     associations = JiraMigration.get_list_from_tag(path)
 
@@ -749,8 +796,8 @@ module JiraMigration
     end
   end
 
+  #############################
   def self.migrate_membership()
-
     memberships = self.get_list_from_tag('/*/Membership[@membershipType="GROUP_USER"]')
 
     memberships.each do |m|
@@ -771,8 +818,8 @@ module JiraMigration
 
   end
 
+  ##############################
   def self.migrate_issue_links()
-
     # Issue Link Types
     issue_link_types = self.get_list_from_tag('/*/IssueLinkType')
     # migrated_issue_link_types = {"jira issuelink type" => "redmine link type"}
@@ -816,8 +863,8 @@ module JiraMigration
     end
   end
 
+  ###########################
   def self.migrate_worktime()
-
     # Set Issue Links
     worklogs = self.get_list_from_tag('/*/Worklog')
     puts("Collected #{worklogs.length} worklogs")
@@ -836,6 +883,7 @@ module JiraMigration
     end
   end
 
+  ###############################
   def self.get_jira_issue_types()
     # Issue Type
     issue_types = self.get_list_from_tag('/*/IssueType') 
@@ -848,6 +896,7 @@ module JiraMigration
     return migrated_issue_types
   end
 
+  ############################
   def self.get_jira_statuses()
     # Issue Status
     issue_status = self.get_list_from_tag('/*/Status')
@@ -860,6 +909,7 @@ module JiraMigration
     return migrated_issue_status
   end
 
+  ##############################
   def self.get_jira_priorities()
     # Issue Priority
     issue_priority = self.get_list_from_tag('/*/Priority')
@@ -872,7 +922,8 @@ module JiraMigration
     return migrated_issue_priority
   end
 
-  # Parse jira xml for Users and attributes and return new User record
+  ##########################################################
+  # Parse jira xml for users and return an array of JiraUser
   def self.parse_jira_users()
     users = []
 
@@ -931,13 +982,12 @@ module JiraMigration
         end
       end
     end
-
     return users
   end
 
-  # Parse jira xml for Group and attributes and return groups record
+  ###########################################################
+  # Parse jira xml for group and return an array of JiraGroup
   def self.parse_jira_groups()
-
     ret = []
 
     #<Group id="30" groupName="developers" lowerGroupName="developers" active="1" local="0" createdDate="2011-05-08 15:47:01.492" updatedDate="2011-05-08 15:47:01.492" type="GROUP" directoryId="1"/>
@@ -958,6 +1008,8 @@ module JiraMigration
     return ret
   end
 
+  ################################################################
+  # Parse jira xml for projects and return an array of JiraProject
   def self.parse_projects()
     # PROJECTS:
     # for project we need (identifies, name and description)
@@ -978,6 +1030,8 @@ module JiraMigration
     return projs
   end
 
+  ################################################################
+  # Parse jira xml for versions and return an array of JiraVersion
   def self.parse_versions()
     ret = []
     # $doc.elements.each('/*/Action[@type="comment"]') do |node|
@@ -988,6 +1042,8 @@ module JiraMigration
     return ret
   end
 
+  ####################################################################
+  # Parse jira xml for components and return an array of JiraComponent
   def self.parse_components()
   	nodes = self.get_list_from_tag('/*/Component')
     ret = []
@@ -999,6 +1055,8 @@ module JiraMigration
     return ret
   end
 
+  ############################################################
+  # Parse jira xml for issues and return an array of JiraIssue
   def self.parse_issues()
   	nodes = []
     ret = []
@@ -1014,12 +1072,14 @@ module JiraMigration
     end
 
     nodes.each do |node|
-	  issue = JiraIssue.new(node)
-	  ret.push(issue)
-	end
+	    issue = JiraIssue.new(node)
+	    ret.push(issue)
+	  end
     return ret
   end
 
+  ################################################################
+  # Parse jira xml for comments and return an array of JiraComment
   def self.parse_comments()
     ret = []
     # $doc.elements.each('/*/Action[@type="comment"]') do |node|
@@ -1030,6 +1090,8 @@ module JiraMigration
     return ret
   end 
 
+  #######################################################################
+  # Parse jira xml for attachements and return an array of JiraAttachment
   def self.parse_attachments()
     attachs = []
     # $doc.elements.each('/*/FileAttachment') do |node|
@@ -1037,10 +1099,10 @@ module JiraMigration
       attach = JiraAttachment.new(node)
       attachs.push(attach)
     end
-
     return attachs
   end
 
+  #######################################################################
   # Migrate an array of objects while displaying some targeted attributes
   # Ex:
   #   migrate(users, {'jira_key' => -10, 'jira_id' => 10, 'jira_assignee' => -10})
@@ -1103,310 +1165,317 @@ module JiraMigration
     puts
     return created
   end
-
 end
 
+############################
 namespace :jira_migration do
+  task :load_xml => :environment do
 
-    task :load_xml => :environment do
+    file = File.new(JiraMigration::ENTITIES_FILE, 'r:utf-8')
+    # doc = REXML::Document.new(file)
+    doc = Nokogiri::XML(file,nil,'utf-8')
+    $doc = doc
 
-      file = File.new(JiraMigration::ENTITIES_FILE, 'r:utf-8')
-      # doc = REXML::Document.new(file)
-      doc = Nokogiri::XML(file,nil,'utf-8')
-      $doc = doc
+    $MIGRATED_USERS_BY_NAME = Hash[User.all.map{|u|[u.login, u]}] #{} # Maps the Jira username to the Redmine Rails User object
 
-      $MIGRATED_USERS_BY_NAME = Hash[User.all.map{|u|[u.login, u]}] #{} # Maps the Jira username to the Redmine Rails User object
-
-      # $doc.elements.each("/*/Project") do |p|
-      $doc.xpath("/*/Project").each do |p|
-        $MAP_PROJECT_ID_TO_PROJECT_KEY[p['id']] = p['key']
-      end
-
-      #$doc.elements.each("/*/Issue") do |i|
-      $doc.xpath("/*/Issue").each do |i|
-        $MAP_ISSUE_TO_PROJECT_KEY[i["id"]] = { :project_id => i["project"], :project_key => $MAP_PROJECT_ID_TO_PROJECT_KEY[i["project"]], :issue_key => i['key']}
-      end
-
+    # $doc.elements.each("/*/Project") do |p|
+    $doc.xpath("/*/Project").each do |p|
+      $MAP_PROJECT_ID_TO_PROJECT_KEY[p['id']] = p['key']
     end
 
-    desc "Generates the configuration for the map things from Jira to Redmine"
-    task :generate_conf => [:environment, :load_xml] do
-      conf_file = JiraMigration::CONF_FILE
-      conf_exists = File.exists?(conf_file)
-      if conf_exists
-        puts "You already have a conf file"
-        print "You want overwrite it ? [y/N] "
-        overwrite = STDIN.gets.match(/^y$/i)
-      end
-
-      if !conf_exists or overwrite
-        # Let's give the user all options to fill out
-        options = JiraMigration.get_all_options()
-
-        File.open(conf_file, "w"){ |f| f.write(options.to_yaml) }
-
-        puts "This migration script needs the migration table to continue "
-        puts "Please... fill the map table on the file: '#{conf_file}' and run again the script"
-        puts "To start the options again, just remove the file '#{conf_file} and run again the script"
-        exit(0)
-      end
+    #$doc.elements.each("/*/Issue") do |i|
+    $doc.xpath("/*/Issue").each do |i|
+      $MAP_ISSUE_TO_PROJECT_KEY[i["id"]] = { :project_id => i["project"], :project_key => $MAP_PROJECT_ID_TO_PROJECT_KEY[i["project"]], :issue_key => i['key']}
     end
-
-    desc "Gets the configuration from YAML"
-    task :pre_conf => [:environment, :load_xml] do
-
-      conf_file = JiraMigration::CONF_FILE
-      conf_exists = File.exists?(conf_file)
-
-      if !conf_exists
-        Rake::Task['jira_migration:generate_conf'].invoke
-      end
-      $confs = YAML.load_file(conf_file)
-    end
-
-    desc "Migrates Jira Issue Types to Redmine Trackers"
-    task :migrate_issue_types => [:environment, :pre_conf] do
-
-      JiraMigration.get_jira_issue_types()
-      types = $confs["types"]
-      types.each do |key, value|
-        t = Tracker.find_by_name(value)
-        if t.nil?
-          t = Tracker.new(name: value)
-        end
-        printf("%s => %s\n", key, value)
-        t.save!
-        t.reload
-        $MIGRATED_ISSUE_TYPES[key] = t
-      end
-      puts "Migrated issue types"
-    end
-
-    desc "Migrates Jira Issue Status to Redmine Status"
-    task :migrate_issue_status => [:environment, :pre_conf] do
-      JiraMigration.get_jira_statuses()
-      status = $confs["status"]
-      status.each do |key, value|
-        s = IssueStatus.find_by_name(value)
-        if s.nil?
-          s = IssueStatus.new(name: value)
-        end
-        printf("%s => %s\n", key, value)
-		s.save!
-        s.reload
-        $MIGRATED_ISSUE_STATUS[key] = s
-      end
-      puts "Migrated issue status"
-    end
-
-    desc "Migrates Jira Issue Priorities to Redmine Priorities"
-    task :migrate_issue_priorities => [:environment, :pre_conf] do
-      JiraMigration.get_jira_priorities()
-      priorities = $confs["priorities"]
-
-      priorities.each do |key, value|
-        p = IssuePriority.find_by_name(value)
-        if p.nil?
-          p = IssuePriority.new(name: value)
-        end
-        printf("%s => %s\n", key, value)
-        p.save!
-        p.reload
-        $MIGRATED_ISSUE_PRIORITIES[key] = p
-      end
-      puts "Migrated issue priorities"
-    end
-
-    desc "Migrates Jira Projects to Redmine Projects"
-    task :migrate_projects => :environment do
-      projects = JiraMigration.parse_projects()
-      attrs = {
-        'jira_id'            => 12,
-        'jira_key'           => 16,
-        'jira_name'          => -32,
-      }
-      created = JiraMigration.migrate(projects, attrs)
-      puts "Migrated projects (#{created}/#{projects.size})"
-    end
-
-    desc "Migrates Jira Users to Redmine Users"
-    task :migrate_users => [:environment, :pre_conf] do
-      users = JiraMigration.parse_jira_users()
-      attrs = {
-        'jira_id'            => 12,
-        'jira_name'          => -24,
-        'jira_emailAddress'  => -32,
-        'jira_firstName'     => -24,
-        'jira_lastName'      => -32,
-      }
-      created = JiraMigration.migrate(users, attrs)
-      puts "Migrated users (#{created}/${users.size})"
-    end
-    
-    desc "Migrates Jira Group to Redmine Group"
-    task :migrate_groups => [:environment, :pre_conf] do
-      groups = JiraMigration.parse_jira_groups()
-      attrs = {
-        'jira_id'            => 12,
-        'jira_name'          => -24,
-      }
-      created = JiraMigration.migrate(groups, attrs)
-      puts "Migrated groups (#{created}/#{groups.size})"
-    
-      JiraMigration.migrate_membership
-      puts "Migrated Membership"
-    
-    end
-
-    desc "Migrates Jira Versions to Redmine Versions"
-    task :migrate_versions => :environment do
-      versions = JiraMigration.parse_versions()
-      versions.reject!{|version|version.red_project.nil?}
-      attrs = {
-        'jira_id'            => 12,
-        'jira_project'       => 12,
-        'red_project'        => -32,
-        'jira_name'          => -32,
-      }
-      created = JiraMigration.migrate(versions, attrs)
-      puts "Migrated versions (#{created}/#{versions.size})"
-    end
-
-    desc "Migrates Jira Components to Redmine Issue Categories"
-    task :migrate_components => :environment do
-      categories = JiraMigration.parse_components()
-      categories.reject!{|category|category.red_project.nil?}
-      attrs = {
-        'jira_id'            => 12,
-        'red_project'        => 24,
-        'red_name'           => -64,
-        'jira_lead'          => -24,
-      }
-      created = JiraMigration.migrate(categories, attrs)
-      puts "Migrated categories (#{created}/#{categories.size})"
-    end
-
-    desc "Migrates Jira Issues to Redmine Issues"
-    task :migrate_issues => :environment do
-      issues = JiraMigration.parse_issues()
-      issues.reject!{|issue|issue.red_project.nil?}
-      attrs = {
-        'jira_id'            => 12,
-        'jira_key'           => -12,
-        'red_tracker'        => -24,
-        'jira_reporter'      => -24,
-        'jira_assignee'      => -24,
-      }
-      created = JiraMigration.migrate(issues, attrs)
-      puts "Migrated issues (#{created}/#{issues.size})"
-
-      JiraMigration.migrate_fixed_versions
-      JiraMigration.migrate_issue_links
-      JiraMigration.migrate_worktime
-
-    end
-
-    desc "Migrates Jira Issues Comments to Redmine Issues Journals (Notes)"
-    task :migrate_comments => :environment do
-      comments = JiraMigration.parse_comments()
-      comments.reject!{|comment|comment.red_journalized.nil?}
-      comments.each do |c|
-        #pp(c)
-        c.migrate
-      end
-    end
-
-    desc "Migrates Jira Issues Attachments to Redmine Attachments"
-    task :migrate_attachments => :environment do
-      attachs = JiraMigration.parse_attachments()
-      attachs.reject!{|attach|attach.red_container.nil?}
-      attachs.each do |a|
-        #pp(c)
-        a.migrate
-      end
-    end
-
-
-    ##################################### Tests ##########################################
-    desc "Just pretty print Jira Projects on screen"
-    task :test_parse_projects => :environment do
-      projects = JiraMigration.parse_projects()
-      projects.each {|p| pp(p.run_all_redmine_fields) }
-    end
-
-    desc "Just pretty print Jira Users on screen"
-    task :test_parse_users => :environment do
-      users = JiraMigration.parse_jira_users()
-      users.each {|u| pp( u.run_all_redmine_fields) }
-    end
-
-    desc "Just pretty print Jira Groups on screen"
-    task :test_parse_groups => :environment do
-      groups = JiraMigration.parse_jira_groups()
-      groups.each {|g| pp( g.run_all_redmine_fields) }
-    end
-
-    desc "Just pretty print Jira Versions on screen"
-    task :test_parse_versions => :environment do
-      versions = JiraMigration.parse_versions()
-      versions.each {|c| pp( c.run_all_redmine_fields) }
-    end
-
-    desc "Just pretty print Jira Components on screen"
-    task :test_parse_components => :environment do
-      categories = JiraMigration.parse_components()
-      categories.each {|c| pp( c.run_all_redmine_fields) }
-    end
-
-    desc "Just pretty print Jira Issues on screen"
-    task :test_parse_issues => :environment do
-      issues = JiraMigration.parse_issues()
-      issues.each {|i| pp( i.run_all_redmine_fields) }
-    end
-
-    desc "Just pretty print Jira Comments on screen"
-    task :test_parse_comments => :environment do
-      comments = JiraMigration.parse_comments()
-      comments.each {|c| pp( c.run_all_redmine_fields) }
-    end
-
-    desc "Just pretty print Jira Attachments on screen"
-    task :test_parse_attachments => :environment do
-      attachments = JiraMigration.parse_attachments()
-      attachments.each {|i| pp( i.run_all_redmine_fields) }
-    end
-
-    ##################################### Running all tests ##########################################
-    desc "Tests all parsers!"
-    task :test_all_migrations => [:environment, :pre_conf,
-                                  :test_parse_projects,
-                                  :test_parse_users,
-                                  :test_parse_groups,
-                                  :test_parse_versions,
-                                  :test_parse_components,
-                                  :test_parse_issues,
-                                  :test_parse_comments,
-                                  :test_parse_attachments
-                                  ] do
-      puts "All parsers done! :-)"
-    end
-
-    ##################################### Running all tasks ##########################################
-    desc "Run all parsers!"
-    task :do_all_migrations => [:environment, :pre_conf,
-                                :migrate_issue_types,
-                                :migrate_issue_status,
-                                :migrate_issue_priorities,
-                                :migrate_projects,
-                                :migrate_users,
-                                :migrate_groups,
-                                :migrate_versions,
-                                :migrate_components,
-                                :migrate_issues,
-                                :migrate_comments,
-                                :migrate_attachments
-								] do
-      puts "All migrations done! :-)"
-    end
-
   end
+
+  ##########################################################################
+  desc "Generates the configuration for the map things from Jira to Redmine"
+  task :generate_conf => [:environment, :load_xml] do
+    conf_file = JiraMigration::CONF_FILE
+    conf_exists = File.exists?(conf_file)
+    if conf_exists
+      puts "You already have a conf file"
+      print "You want overwrite it ? [y/N] "
+      overwrite = STDIN.gets.match(/^y$/i)
+    end
+
+    if !conf_exists or overwrite
+      # Let's give the user all options to fill out
+      options = JiraMigration.get_all_options()
+
+      File.open(conf_file, "w"){ |f| f.write(options.to_yaml) }
+
+      puts "This migration script needs the migration table to continue "
+      puts "Please... fill the map table on the file: '#{conf_file}' and run again the script"
+      puts "To start the options again, just remove the file '#{conf_file} and run again the script"
+      exit(0)
+    end
+  end
+
+  #######################################
+  desc "Gets the configuration from YAML"
+  task :pre_conf => [:environment, :load_xml] do
+
+    conf_file = JiraMigration::CONF_FILE
+    conf_exists = File.exists?(conf_file)
+
+    if !conf_exists
+      Rake::Task['jira_migration:generate_conf'].invoke
+    end
+    $confs = YAML.load_file(conf_file)
+  end
+
+  ####################################################
+  desc "Migrates Jira Issue Types to Redmine Trackers"
+  task :migrate_issue_types => [:environment, :pre_conf] do
+
+    JiraMigration.get_jira_issue_types()
+    types = $confs["types"]
+    types.each do |key, value|
+      t = Tracker.find_by_name(value)
+      if t.nil?
+        t = Tracker.new(name: value)
+      end
+      printf("%s => %s\n", key, value)
+      t.save!
+      t.reload
+      $MIGRATED_ISSUE_TYPES[key] = t
+    end
+    puts "Migrated issue types"
+  end
+
+  ###################################################
+  desc "Migrates Jira Issue Status to Redmine Status"
+  task :migrate_issue_status => [:environment, :pre_conf] do
+    JiraMigration.get_jira_statuses()
+    status = $confs["status"]
+    status.each do |key, value|
+      s = IssueStatus.find_by_name(value)
+      if s.nil?
+        s = IssueStatus.new(name: value)
+      end
+      printf("%s => %s\n", key, value)
+      s.save!
+      s.reload
+      $MIGRATED_ISSUE_STATUS[key] = s
+    end
+    puts "Migrated issue status"
+  end
+
+  ###########################################################
+  desc "Migrates Jira Issue Priorities to Redmine Priorities"
+  task :migrate_issue_priorities => [:environment, :pre_conf] do
+    JiraMigration.get_jira_priorities()
+    priorities = $confs["priorities"]
+
+    priorities.each do |key, value|
+      p = IssuePriority.find_by_name(value)
+      if p.nil?
+        p = IssuePriority.new(name: value)
+      end
+      printf("%s => %s\n", key, value)
+      p.save!
+      p.reload
+      $MIGRATED_ISSUE_PRIORITIES[key] = p
+    end
+    puts "Migrated issue priorities"
+  end
+
+  ###########################################
+  desc "Migrates Jira Users to Redmine Users"
+  task :migrate_users => [:environment, :pre_conf] do
+    users = JiraMigration.parse_jira_users()
+    attrs = {
+      'jira_id'            => 12,
+      'jira_name'          => -24,
+      'jira_emailAddress'  => -32,
+      'jira_firstName'     => -24,
+      'jira_lastName'      => -32,
+    }
+    created = JiraMigration.migrate(users, attrs)
+    puts "Migrated users (#{created}/${users.size})"
+  end
+
+  ###########################################
+  desc "Migrates Jira Group to Redmine Group"
+  task :migrate_groups => [:environment, :pre_conf] do
+    groups = JiraMigration.parse_jira_groups()
+    attrs = {
+      'jira_id'            => 12,
+      'jira_name'          => -24,
+    }
+    created = JiraMigration.migrate(groups, attrs)
+    puts "Migrated groups (#{created}/#{groups.size})"
+
+    JiraMigration.migrate_membership
+    puts "Migrated Membership"
+  end
+
+  #################################################
+  desc "Migrates Jira Projects to Redmine Projects"
+  task :migrate_projects => :environment do
+    projects = JiraMigration.parse_projects()
+    attrs = {
+      'jira_id'            => 12,
+      'jira_key'           => 16,
+      'jira_name'          => -32,
+    }
+    created = JiraMigration.migrate(projects, attrs)
+    puts "Migrated projects (#{created}/#{projects.size})"
+  end
+
+  #################################################
+  desc "Migrates Jira Versions to Redmine Versions"
+  task :migrate_versions => :environment do
+    versions = JiraMigration.parse_versions()
+    versions.reject!{|version|version.red_project.nil?}
+    attrs = {
+      'jira_id'            => 12,
+      'jira_project'       => 12,
+      'red_project'        => -32,
+      'jira_name'          => -32,
+    }
+    created = JiraMigration.migrate(versions, attrs)
+    puts "Migrated versions (#{created}/#{versions.size})"
+  end
+
+  ###########################################################
+  desc "Migrates Jira Components to Redmine Issue Categories"
+  task :migrate_components => :environment do
+    categories = JiraMigration.parse_components()
+    categories.reject!{|category|category.red_project.nil?}
+    attrs = {
+      'jira_id'            => 12,
+      'red_project'        => 24,
+      'red_name'           => -64,
+      'jira_lead'          => -24,
+    }
+    created = JiraMigration.migrate(categories, attrs)
+    puts "Migrated categories (#{created}/#{categories.size})"
+  end
+
+  #############################################
+  desc "Migrates Jira Issues to Redmine Issues"
+  task :migrate_issues => :environment do
+    issues = JiraMigration.parse_issues()
+    issues.reject!{|issue|issue.red_project.nil?}
+    attrs = {
+      'jira_id'            => 12,
+      'jira_key'           => -12,
+      'red_tracker'        => -24,
+      'jira_reporter'      => -24,
+      'jira_assignee'      => -24,
+    }
+    created = JiraMigration.migrate(issues, attrs)
+    puts "Migrated issues (#{created}/#{issues.size})"
+
+    JiraMigration.migrate_fixed_versions
+    JiraMigration.migrate_issue_links
+    JiraMigration.migrate_worktime
+  end
+
+  #######################################################################
+  desc "Migrates Jira Issues Comments to Redmine Issues Journals (Notes)"
+  task :migrate_comments => :environment do
+    comments = JiraMigration.parse_comments()
+    comments.reject!{|comment|comment.red_journalized.nil?}
+    comments.each do |c|
+      #pp(c)
+      c.migrate
+    end
+  end
+
+  ##############################################################
+  desc "Migrates Jira Issues Attachments to Redmine Attachments"
+  task :migrate_attachments => :environment do
+    attachs = JiraMigration.parse_attachments()
+    attachs.reject!{|attach|attach.red_container.nil?}
+    attachs.each do |a|
+      #pp(c)
+      a.migrate
+    end
+  end
+
+  ##################################### Tests ##########################################
+  desc "Just pretty print Jira Projects on screen"
+  task :test_parse_projects => :environment do
+    projects = JiraMigration.parse_projects()
+    projects.each {|p| pp(p.run_all_redmine_fields) }
+  end
+
+  desc "Just pretty print Jira Users on screen"
+  task :test_parse_users => :environment do
+    users = JiraMigration.parse_jira_users()
+    users.each {|u| pp( u.run_all_redmine_fields) }
+  end
+
+  desc "Just pretty print Jira Groups on screen"
+  task :test_parse_groups => :environment do
+    groups = JiraMigration.parse_jira_groups()
+    groups.each {|g| pp( g.run_all_redmine_fields) }
+  end
+
+  desc "Just pretty print Jira Versions on screen"
+  task :test_parse_versions => :environment do
+    versions = JiraMigration.parse_versions()
+    versions.each {|c| pp( c.run_all_redmine_fields) }
+  end
+
+  desc "Just pretty print Jira Components on screen"
+  task :test_parse_components => :environment do
+    categories = JiraMigration.parse_components()
+    categories.each {|c| pp( c.run_all_redmine_fields) }
+  end
+
+  desc "Just pretty print Jira Issues on screen"
+  task :test_parse_issues => :environment do
+    issues = JiraMigration.parse_issues()
+    issues.each {|i| pp( i.run_all_redmine_fields) }
+  end
+
+  desc "Just pretty print Jira Comments on screen"
+  task :test_parse_comments => :environment do
+    comments = JiraMigration.parse_comments()
+    comments.each {|c| pp( c.run_all_redmine_fields) }
+  end
+
+  desc "Just pretty print Jira Attachments on screen"
+  task :test_parse_attachments => :environment do
+    attachments = JiraMigration.parse_attachments()
+    attachments.each {|i| pp( i.run_all_redmine_fields) }
+  end
+
+  ##################################### Running all tests ##########################################
+  desc "Tests all parsers!"
+  task :test_all_migrations => [:environment, :pre_conf,
+    :test_parse_users,
+    :test_parse_groups,
+    :test_parse_projects,
+    :test_parse_versions,
+    :test_parse_components,
+    :test_parse_issues,
+    :test_parse_comments,
+    :test_parse_attachments
+  ] do
+    puts "All parsers done! :-)"
+  end
+
+  ##################################### Running all tasks ##########################################
+  desc "Run all parsers!"
+  task :do_all_migrations => [:environment, :pre_conf,
+    :migrate_issue_types,
+    :migrate_issue_status,
+    :migrate_issue_priorities,
+    :migrate_users,
+    :migrate_groups,
+    :migrate_projects,
+    :migrate_versions,
+    :migrate_components,
+    :migrate_issues,
+    :migrate_comments,
+    :migrate_attachments
+  ] do
+    puts "All migrations done! :-)"
+  end
+end
