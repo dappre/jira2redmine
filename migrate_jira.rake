@@ -1041,6 +1041,69 @@ module JiraMigration
     return attachs
   end
 
+  # Migrate an array of objects while displaying some targeted attributes
+  # Ex:
+  #   migrate(users, {'jira_key' => -10, 'jira_id' => 10, 'jira_assignee' => -10})
+  #
+  # Will produce something like this:
+  # jira_key   |    jira_id | status   |           id
+  # PRJ-007    |      19756 | exists   |          156
+  # PRJ-008    |      19757 | created  |          478
+  def self.migrate(objs, attrs, vsep = " \\ ", hsep = '\\')
+    # Compute adapted size for horizontal separator
+    sep = 20 + vsep.size
+    attrs.each do |name,format|
+      sep += format.abs
+      sep += vsep.size
+    end
+  
+    # Print header
+    1.upto(sep).each { putc(hsep) }
+    puts
+    attrs.each do |name,format|
+      printf("%#{format.to_s}.#{format.to_s.sub('-', '')}s#{vsep}", name)
+    end
+    printf("%-8s#{vsep}%12s\n", 'status', 'red_id')
+    1.upto(sep).each { putc(hsep) }
+    puts
+
+    # Prepare counter
+    created = 0
+
+    # Print attributes
+    objs.each do |obj|
+      attrs.each do |name,format|
+        att = '-'
+        begin
+          # Try to call the getter method first
+          att = obj.send(name)
+        rescue NoMethodError => e
+          # Fallback on the attribute
+          att = obj[name] unless obj[name].nil?
+        end
+        printf("%#{format.to_s}.#{format.to_s.sub('-', '')}s#{vsep}", att)
+      end
+      begin
+        obj.migrate
+      rescue NoMethodError => e
+        printf("%-8s#{vsep}%12s\n", 'NoMethod', '-')
+        next
+      end
+  
+      # Print status
+      if obj.is_new
+        printf("%-8s#{vsep}", 'created')
+        created += 1
+      else
+        printf("%-8s#{vsep}", 'exists')
+      end
+      printf("%12s\n", obj.new_record.id.to_s)
+    end
+    1.upto(sep).each { putc(hsep) }
+    puts
+    return created
+  end
+
 end
 
 namespace :jira_migration do
@@ -1104,58 +1167,26 @@ namespace :jira_migration do
     desc "Migrates Jira Users to Redmine Users"
     task :migrate_users => [:environment, :pre_conf] do
       users = JiraMigration.parse_jira_users()
-      printf("%-24.24s | %-32.32s | %-24.24s | %-32.32s | %-8s | %12s\n",
-        'jira_name',
-        'jira_emailAddress',
-        'jira_firstName',
-        'jira_lastName',
-        'status',
-        'id'
-      )
-      users.each do |u|
-        #pp(u)
-        printf("%-24.24s | %-32.32s | %-24.24s | %-32.32s | ",
-          u.jira_name,
-          u.jira_emailAddress,
-          u.jira_firstName,
-          u.jira_lastName
-        )
-        new_user = u.migrate
-        if u.is_new
-          printf("%-8s | ", 'created')
-        else
-          printf("%-8s | ", 'exists')
-        end
-        printf("%12i\n", u.new_record.id)
-      end
-
-      puts "Migrated Users"
-
+      attrs = {
+        'jira_id'            => 12,
+        'jira_name'          => -24,
+        'jira_emailAddress'  => -32,
+        'jira_firstName'     => -24,
+        'jira_lastName'      => -32,
+      }
+      created = JiraMigration.migrate(users, attrs)
+      puts "Migrated users (#{created}/${users.size})"
     end
 
     desc "Migrates Jira Group to Redmine Group"
     task :migrate_groups => [:environment, :pre_conf] do
       groups = JiraMigration.parse_jira_groups()
-      printf("%-24.24s | %12s | %-8s | %12s\n",
-        'jira_name',
-        'jira_id',
-        'status',
-        'red_id'
-      )
-      groups.each do |g|
-        printf("%-24.24s | %12s | ",
-          g.jira_name,
-          g.jira_id
-        )
-      	g.migrate
-        if g.is_new
-          printf("%-8s | ", 'created')
-        else
-          printf("%-8s | ", 'exists')
-        end
-        printf("%12i\n", g.new_record.id)
-      end
-      puts "Migrated Groups"
+      attrs = {
+        'jira_id'            => 12,
+        'jira_name'          => -24,
+      }
+      created = JiraMigration.migrate(groups, attrs)
+      puts "Migrated groups (#{created}/#{groups.size})"
 
       JiraMigration.migrate_membership
       puts "Migrated Membership"
@@ -1218,97 +1249,56 @@ namespace :jira_migration do
     desc "Migrates Jira Projects to Redmine Projects"
     task :migrate_projects => :environment do
       projects = JiraMigration.parse_projects()
-      printf("%-16s | %32s | %16s\n", 'jira_key', 'jira_name', 'id')
-      projects.each do |p|
-        printf("%-16s | %32s | ", p.jira_key, p.jira_name)
-        p.migrate
-        printf("%16s\n", p.new_record.id)
-      end
+      attrs = {
+        'jira_id'            => 12,
+        'jira_key'           => 16,
+        'jira_name'          => -32,
+      }
+      created = JiraMigration.migrate(projects, attrs)
+      puts "Migrated projects (#{created}/#{projects.size})"
     end
 
     desc "Migrates Jira Versions to Redmine Versions"
     task :migrate_versions => :environment do
       versions = JiraMigration.parse_versions()
       versions.reject!{|version|version.red_project.nil?}
-      printf("%-32.32s | %12s | %-32.32s | %-8s | %12s\n",
-        'red_project',
-        'jira_id',
-        'jira_name',
-        'status',
-        'id'
-      )
-      versions.each do |i|
-      	printf("%-32.32s | %12i | %-32.32s | ",
-      	  i.red_project,
-      	  i.jira_id,
-      	  i.jira_name
-      	)
-        i.migrate
-        if i.is_new
-          printf("%-8s | ", 'created')
-        else
-          printf("%-8s | ", 'exists')
-        end
-        printf("%12i\n", i.new_record.id)
-      end
+      attrs = {
+        'jira_id'            => 12,
+        'jira_project'       => 12,
+        'red_project'        => -32,
+        'jira_name'          => -32,
+      }
+      created = JiraMigration.migrate(versions, attrs)
+      puts "Migrated versions (#{created}/#{versions.size})"
     end
 
     desc "Migrates Jira Components to Redmine Issue Categories"
     task :migrate_components => :environment do
       categories = JiraMigration.parse_components()
       categories.reject!{|category|category.red_project.nil?}
-      printf("%-24.24s | %-64.64s | %-24.24s | %-8s | %12s\n",
-        'red_project',
-        'red_name',
-        'jira_lead',
-        'status',
-        'id'
-      )
-      categories.each do |c|
-      	printf("%-24.24s | %-64.64s | %-24.24s | ",
-      	  c.red_project,
-      	  c.red_name,
-      	  c.jira_lead
-      	)
-        c.migrate
-        if c.is_new
-          printf("%-8s | ", 'created')
-        else
-          printf("%-8s | ", 'exists')
-        end
-        printf("%12i\n", c.tag['id'])
-     end
+      attrs = {
+        'jira_id'            => 12,
+        'red_project'        => 24,
+        'red_name'           => -64,
+        'jira_lead'          => -24,
+      }
+      created = JiraMigration.migrate(categories, attrs)
+      puts "Migrated categories (#{created}/#{categories.size})"
     end
 
     desc "Migrates Jira Issues to Redmine Issues"
     task :migrate_issues => :environment do
       issues = JiraMigration.parse_issues()
       issues.reject!{|issue|issue.red_project.nil?}
-      printf("%-12.12s | %24.24s => %-24.24s | %-24.24s | %-24.24s | %-8s | %12s\n",
-        'jira_key',
-        'jira_type',
-        'red_tracker',
-        'jira_reporter',
-        'jira_assignee',
-        'status',
-        'id'
-      )
-      issues.each do |i|
-        printf("%-12.12s | %24.24s => %-24.24s | %-24.24s | %-24.24s | ",
-          i.jira_key,
-          $MIGRATED_ISSUE_TYPES_BY_ID[i.jira_type],
-          i.red_tracker,
-          ( i.jira_reporter.nil? && '-' || i.jira_reporter.to_s ),
-          ( i.jira_assignee.nil? && '-' || i.jira_assignee.to_s )
-        )
-        i.migrate
-        if i.is_new
-          printf("%-8s | ", 'created')
-        else
-          printf("%-8s | ", 'exists')
-        end
-        printf("%12i\n", i.tag['id'])
-      end
+      attrs = {
+        'jira_id'            => 12,
+        'jira_key'           => -12,
+        'red_tracker'        => -24,
+        'jira_reporter'      => -24,
+        'jira_assignee'      => -24,
+      }
+      created = JiraMigration.migrate(issues, attrs)
+      puts "Migrated issues (#{created}/#{issues.size})"
 
       JiraMigration.migrate_fixed_versions
       JiraMigration.migrate_issue_links
