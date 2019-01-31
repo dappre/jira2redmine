@@ -145,10 +145,10 @@ module JiraMigration
       self.jira_name
     end
 	def red_status
-	  if (self.jira_active.to_s == '1')
-	    return 1 
-	  else
+	  if (!self.jira_active.nil? && self.jira_active.to_s != '1')
 	    return 3 #locked user
+	  else
+	    return 1 #unlock by default
 	  end
 	end
     def before_save(new_record)
@@ -174,11 +174,15 @@ module JiraMigration
     end
 
     def retrieve
-      group = self.class::DEST_MODEL.find_by_lastname(self.jira_lowerGroupName)
+      group = self.class::DEST_MODEL.find_by_lastname(self.red_name)
     end
 
     def red_name
-      self.jira_lowerGroupName
+      if self.jira_name.nil?
+        return self.jira_lowerGroupName
+      else
+      	return self.jira_name
+      end
     end
   end
 
@@ -931,20 +935,27 @@ module JiraMigration
     return users
   end
 
-  # Parse jira xml for Group and attributes and return new Group record
+  # Parse jira xml for Group and attributes and return groups record
   def self.parse_jira_groups()
 
-    groups = []
+    ret = []
 
     #<Group id="30" groupName="developers" lowerGroupName="developers" active="1" local="0" createdDate="2011-05-08 15:47:01.492" updatedDate="2011-05-08 15:47:01.492" type="GROUP" directoryId="1"/>
-
-    $doc.xpath('/*/OSGroup').each do |node|
-         group = JiraGroup.new(node)
-
-          groups.push(group)
-          pp 'Found JIRA group:',group.jira_lowerGroupName
+    groups = JiraMigration.get_list_from_tag('/*/Group')
+    groups.each do |group|
+      g = JiraGroup.new(group)
+      ret.push(g)
     end
-    return groups
+
+    #<OSGroup id="10020" name="Devops"/>
+    groups = JiraMigration.get_list_from_tag('/*/OSGroup')
+    groups.each do |group|
+      g = JiraGroup.new(group)
+      ret.push(g)
+    end
+
+    puts("Collected #{ret.size} groups")
+    return ret
   end
 
   def self.parse_projects()
@@ -1093,7 +1104,7 @@ namespace :jira_migration do
     desc "Migrates Jira Users to Redmine Users"
     task :migrate_users => [:environment, :pre_conf] do
       users = JiraMigration.parse_jira_users()
-      printf("%-24.24s | %32.32s | %24.24s | %32.32s | %-8s | %12s\n",
+      printf("%-24.24s | %-32.32s | %-24.24s | %-32.32s | %-8s | %12s\n",
         'jira_name',
         'jira_emailAddress',
         'jira_firstName',
@@ -1103,20 +1114,13 @@ namespace :jira_migration do
       )
       users.each do |u|
         #pp(u)
-        printf("%-24.24s | %32.32s | %24.24s | %32.32s | ",
+        printf("%-24.24s | %-32.32s | %-24.24s | %-32.32s | ",
           u.jira_name,
           u.jira_emailAddress,
           u.jira_firstName,
           u.jira_lastName
         )
-        # Migrate only non-existing users
-        #user = User.find_by_mail(u.jira_emailAddress)
-        #if user.nil?
-          new_user = u.migrate
-          new_user.update_attribute :status, 1
-          #new_user.update_attribute :must_change_passwd, true
-        #end
-        #pp u
+        new_user = u.migrate
         if u.is_new
           printf("%-8s | ", 'created')
         else
@@ -1131,20 +1135,29 @@ namespace :jira_migration do
 
     desc "Migrates Jira Group to Redmine Group"
     task :migrate_groups => [:environment, :pre_conf] do
-      groups = JiraMigration.get_list_from_tag('/*/Group')
-      groups.each do |group|
-        #pp(u)
-        g = Group.find_by_lastname(group['lowerGroupName'])
-        if g.nil?
-          g = Group.new(lastname: group['lowerGroupName'])
+      groups = JiraMigration.parse_jira_groups()
+      printf("%-24.24s | %12s | %-8s | %12s\n",
+        'jira_name',
+        'jira_id',
+        'status',
+        'red_id'
+      )
+      groups.each do |g|
+        printf("%-24.24s | %12s | ",
+          g.jira_name,
+          g.jira_id
+        )
+      	g.migrate
+        if g.is_new
+          printf("%-8s | ", 'created')
+        else
+          printf("%-8s | ", 'exists')
         end
-        g.save!
-        g.reload
+        printf("%12i\n", g.new_record.id)
       end
       puts "Migrated Groups"
 
       JiraMigration.migrate_membership
-
       puts "Migrated Membership"
 
     end
@@ -1337,6 +1350,12 @@ namespace :jira_migration do
       users.each {|u| pp( u.run_all_redmine_fields) }
     end
 
+    desc "Just pretty print Jira Groups on screen"
+    task :test_parse_groups => :environment do
+      groups = JiraMigration.parse_jira_groups()
+      groups.each {|g| pp( g.run_all_redmine_fields) }
+    end
+
     desc "Just pretty print Jira Comments on screen"
     task :test_parse_comments => :environment do
       comments = JiraMigration.parse_comments()
@@ -1366,6 +1385,7 @@ namespace :jira_migration do
     task :test_all_migrations => [:environment, :pre_conf,
                                   :test_parse_projects,
                                   :test_parse_users,
+                                  :test_parse_groups,
                                   :test_parse_components,
                                   :test_parse_issues,
                                   :test_parse_comments,
