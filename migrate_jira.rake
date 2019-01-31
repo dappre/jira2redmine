@@ -16,8 +16,8 @@ module JiraMigration
   ############## Location of jira attachements
   JIRA_ATTACHMENTS_DIR = 'data/attachments'
   ############## Jira URL
-  $JIRA_WEB_URL = 'https://company.atlassian.net'
-  ############## Project filter (ex: 'Test' or '(Test|Demo)'
+  $JIRA_WEB_URL = nil
+  ############## Project filter (ex: "MYPRJ" or "(MYPRJA|MYPRJB)"
   $JIRA_PRJ_FILTER = nil
   ############## Issue key filter (ex: '[^-]+-\d{1,2}' or '(MYPRJA-\d+|MYPRJB-\d{1,2})'
   $JIRA_KEY_FILTER = nil
@@ -242,7 +242,11 @@ module JiraMigration
     MAP = {}
 
     def jira_marker
-      return "FROM JIRA: \"#{$MAP_PROJECT_ID_TO_PROJECT_KEY[self.jira_project]}\":#{$JIRA_WEB_URL}/browse/#{$MAP_PROJECT_ID_TO_PROJECT_KEY[self.jira_project]}\n"
+      marker = "FROM JIRA: #{$MAP_PROJECT_ID_TO_PROJECT_KEY[self.jira_project]}\n"
+      if !$JIRA_WEB_URL.nil?
+        marker = "FROM JIRA: \"#{$MAP_PROJECT_ID_TO_PROJECT_KEY[self.jira_project]}\":#{$JIRA_WEB_URL}/browse/#{$MAP_PROJECT_ID_TO_PROJECT_KEY[self.jira_project]}\n"
+      end
+      return marker 
     end
 
     def retrieve
@@ -324,7 +328,11 @@ module JiraMigration
     end
 
     def jira_marker
-      return "FROM JIRA: \"#{self.jira_key}\":#{$JIRA_WEB_URL}/browse/#{self.jira_key}"
+      marker = "FROM JIRA: #{self.jira_key}"
+      if !$JIRA_WEB_URL.nil?
+        marker = "FROM JIRA: \"#{self.jira_key}\":#{$JIRA_WEB_URL}/browse/#{self.jira_key}"
+      end
+      return marker 
     end
 
     def retrieve
