@@ -91,6 +91,7 @@ module JiraMigration
         puts invalid.record.errors
         puts record.errors.details
         pp self
+        pp record
         raise
       end
 
