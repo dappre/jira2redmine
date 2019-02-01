@@ -22,6 +22,13 @@ module JiraMigration
   ############## Issue key filter (ex: '[^-]+-\d{1,2}' or '(MYPRJA-\d+|MYPRJB-\d{1,2})'
   $JIRA_KEY_FILTER = nil
 
+  roles = Role.where(:builtin => 0).order('position ASC').all
+  ROLE_MAPPING = {
+    'admin'     => roles[0],
+    'developer' => roles[1],
+  }
+  DEFAULT_ROLE = roles.last
+
   ################################
   # Base class for any JIRA object
   # It handle the default initialization from XML nodes
@@ -474,6 +481,16 @@ module JiraMigration
         JiraMigration.find_user_by_jira_name(self.jira_assignee)
       else
         nil
+      end
+    end
+
+    def before_save(new_record)
+      project = JiraProject::MAP[self.jira_project]
+      assignee = User.find_by_login(self.jira_assignee) unless self.jira_assignee.nil?
+      if !assignee.nil? && !assignee.member_of?(project)
+        Member.create(:user => assignee, :project => project, :roles => [ROLE_MAPPING['developer']])
+        project.reload
+        assignee.reload
       end
     end
 
