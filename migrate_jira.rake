@@ -47,6 +47,24 @@ module JiraMigration
       @tag = node
     end
 
+    def self.parse(xpath)
+      # Parse XML nodes into Hashes
+      nodes = []
+      #puts "xpath = #{xpath}" 
+      $doc.xpath(xpath).each do |node|
+        nodes.push(Hash[node.attributes.map { |k,v| [k,v.content]}])
+      end
+      puts "Nodes size = #{nodes.size}"
+      # Convert Hashes into objects
+      objects = []
+      nodes.each do |node|
+        obj = self.new(node)
+        objects.push(obj)
+      end
+      #puts "Objects size = #{objects.size}"
+      return objects
+    end
+
     def method_missing(key, *args)
       if key.to_s.start_with?('jira_')
         attr = key.to_s.sub('jira_', '')
@@ -211,7 +229,6 @@ module JiraMigration
     MAP = {}
 
     def retrieve
-
       self.class::DEST_MODEL.find_by_identifier(self.red_identifier)
     end
 
@@ -311,13 +328,80 @@ module JiraMigration
     end
   end
 
+  #######################################
+  # Specific class for JIRA custom fields
+  class JiraCustomField < BaseJira
+
+    DEST_MODEL = IssueCustomField
+    MAP = {}
+
+    def self.parse(xpath = '/*/CustomField')
+      # TODO: implement CustomValue migration before uncommenting
+      #nodes = super(xpath)
+      nodes = []
+
+      # Add JIRA key as Redmine custom field
+      node = self.new({
+        'name'                   => 'Key',
+        'customfieldtypekey'     => 'com.atlassian.jira.plugin.system.customfieldtypes:textfield',
+        'customfieldsearcherkey' => 'com.atlassian.jira.plugin.system.customfieldtypes:textsearcher',
+      })
+      nodes.push(node)
+
+      # Add JIRA environment as Redmine custom field
+      node = self.new({
+        'name'                   => 'Environment',
+        'customfieldtypekey'     => 'com.atlassian.jira.plugin.system.customfieldtypes:textarea',
+        'customfieldsearcherkey' => 'com.atlassian.jira.plugin.system.customfieldtypes:textsearcher',
+      })
+      nodes.push(node)
+
+      return nodes
+    end
+
+    # Return main attribute names with best string size
+    def self.attrf
+      return {
+        'jira_id'            => 12,
+        'jira_name'          => -24,
+        'red_name'           => -24,
+      }
+    end
+
+    def initialize(node)
+      super
+    end
+
+    def red_name
+      return JiraMigration.encode(self.jira_name[0, JiraMigration::limit_for(IssueCustomField, 'name')])
+    end
+
+    def red_field_format
+      return $confs["custom_field_types"][self.jira_customfieldtypekey]
+    end
+
+    def retrieve
+      self.class::DEST_MODEL.find_by_name(self.jira_name)
+    end
+
+    def post_migrate(new_record, is_new)
+      if is_new
+        new_record.trackers = Tracker.all
+        JiraProject::MAP.each do |jira_project, red_project|
+          new_record.projects << red_project
+        end
+        new_record.reload
+      end
+    end
+  end
+
   ################################
   # Specific class for JIRA issues
   class JiraIssue < BaseJira
     DEST_MODEL = Issue
     MAP = {}
 
-    attr_reader  :jira_description, :jira_reporter
+    attr_reader  :jira_description, :jira_reporter, :jira_environment
 
     def initialize(node)
       super
@@ -333,6 +417,11 @@ module JiraMigration
       end
       @jira_reporter = node['reporter'].to_s
       @jira_assignee = node['assignee'].to_s
+      if @tag.at('environment')
+        @jira_environment = @tag.at('environment').text
+      else
+        @jira_environment = node['environment'].to_s
+      end
     end
 
     def jira_marker
@@ -496,6 +585,28 @@ module JiraMigration
     end
 
     def post_migrate(new_record, is_new)
+      if is_new
+        # Migrate Key as Custom Field Value
+        custom_field = IssueCustomField.find_by_name('Key')
+        v = CustomValue.find_by(
+          :custom_field_id => custom_field.id,
+          :customized_type => 'Issue',
+          :customized_id   => new_record.id,
+        )
+        v.value = self.jira_key
+        v.save
+        # Migrate environment as Custom Field Value
+        unless self.jira_environment.nil? || self.jira_environment.empty?
+          custom_field = IssueCustomField.find_by_name('Environment')
+          v = CustomValue.find_by(
+            :custom_field_id => custom_field.id,
+            :customized_type => 'Issue',
+            :customized_id   => new_record.id,
+          )
+          v.value = self.jira_environment
+          v.save
+        end
+      end
       new_record.update_column :updated_on, Time.parse(self.jira_updated)
       new_record.update_column :created_on, Time.parse(self.jira_created)
       new_record.reload
@@ -687,6 +798,23 @@ module JiraMigration
       "Trivial" => "Low",       # Lowest priority.
   }
 
+
+  CUSTOM_FIELD_TYPE_MARKER = "(choose a Redmine Enumeration Custom Field type)"
+  DEFAULT_CUSTOM_FIELD_TYPE_MAP = {
+    # Default map from Jira (key) to Redmine (value)
+      #''                                                                => 'Boolean', # Checkbox
+      'com.pyxis.greenhopper.jira:greenhopper-ranking'                   => 'float',   # Numeric
+      'com.atlassian.jira.plugin.system.customfieldtypes:float'          => 'float',   # Float
+      'com.atlassian.jira.plugin.system.customfieldtypes:textfield'      => 'text',    # String
+      'com.atlassian.jira.plugin.system.customfieldtypes:url'            => 'link',    # URL
+      'com.atlassian.jira.plugin.system.customfieldtypes:userpicker'     => 'user',    # Single user
+      'com.atlassian.jira.plugin.system.customfieldtypes:textarea'       => 'text',    # Long text
+      'com.atlassian.jira.plugin.system.customfieldtypes:select'         => 'list',    # Enumeration
+      'com.atlassian.jira.plugin.system.customfieldtypes:multiuserpicker'=> 'list',    # User list
+      #''                                                                => 'Date',    # Date
+      #''                                                                => 'Version', # Version
+  }
+
   # Xml file holder
   $doc = nil
 
@@ -726,6 +854,7 @@ module JiraMigration
     ret["types"] = self.get_jira_issue_types()
     ret["status"] = self.get_jira_statuses()
     ret["priorities"] = self.get_jira_priorities()
+    ret["custom_field_types"] = self.get_jira_custom_field_types()
 
     return ret
   end
@@ -965,6 +1094,20 @@ module JiraMigration
     return migrated_issue_priority
   end
 
+  ##############################
+  def self.get_jira_custom_field_types()
+    # Custom Field types
+    custom_fields = self.get_list_from_tag('/*/CustomField')
+    # migrated_custom_fields_type = {"jira_type" => "redmine type"}
+    migrated_custom_fields_type = {}
+    custom_fields.each do |field|
+      if migrated_custom_fields_type[field["customfieldtypekey"]].nil?
+        migrated_custom_fields_type[field["customfieldtypekey"]] = DEFAULT_CUSTOM_FIELD_TYPE_MAP.fetch(field["customfieldtypekey"], CUSTOM_FIELD_TYPE_MARKER)
+      end
+    end
+    return migrated_custom_fields_type
+  end
+
   ##########################################################
   # Parse jira xml for users and return an array of JiraUser
   def self.parse_jira_users()
@@ -1160,7 +1303,7 @@ module JiraMigration
       sep += format.abs
       sep += vsep.size
     end
-  
+
     # Print header
     1.upto(sep).each { putc(hsep) }
     puts
@@ -1191,9 +1334,10 @@ module JiraMigration
         obj.migrate
       rescue NoMethodError => e
         printf("%-8s#{vsep}%12s\n", 'NoMethod', '-')
-        next
+        raise
+        abort
       end
-  
+
       # Print status
       if obj.is_new
         printf("%-8s#{vsep}", 'created')
@@ -1322,6 +1466,15 @@ namespace :jira_migration do
       $MIGRATED_ISSUE_PRIORITIES[key] = p
     end
     puts "Migrated issue priorities"
+  end
+
+  #######################
+  desc "Migrates custom fields"
+  task :migrate_custom_fields => [:environment, :pre_conf] do
+    fields = JiraMigration::JiraCustomField.parse
+    attrf = JiraMigration::JiraCustomField.attrf
+    created = JiraMigration.migrate(fields, attrf)
+    puts "Migrated custom fields (#{created}/#{fields.size})"
   end
 
   ###########################################
@@ -1470,6 +1623,12 @@ namespace :jira_migration do
     categories.each {|c| pp( c.run_all_redmine_fields) }
   end
 
+  desc "Just pretty print Jira Custom Fields on screen"
+  task :test_parse_custom_fields => :environment do
+    fields = JiraMigration::JiraCustomField.parse
+    fields.each {|c| pp( c.run_all_redmine_fields) }
+  end
+
   desc "Just pretty print Jira Issues on screen"
   task :test_parse_issues => :environment do
     issues = JiraMigration.parse_issues()
@@ -1496,6 +1655,7 @@ namespace :jira_migration do
     :test_parse_projects,
     :test_parse_versions,
     :test_parse_components,
+    :test_parse_custom_fields,
     :test_parse_issues,
     :test_parse_comments,
     :test_parse_attachments
@@ -1514,6 +1674,7 @@ namespace :jira_migration do
     :migrate_projects,
     :migrate_versions,
     :migrate_components,
+    :migrate_custom_fields,
     :migrate_issues,
     :migrate_comments,
     :migrate_attachments
