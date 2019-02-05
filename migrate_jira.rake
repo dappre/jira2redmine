@@ -49,12 +49,20 @@ module JiraMigration
 
     def self.parse(xpath)
       # Parse XML nodes into Hashes
-#      nodes = []
-#      $doc.xpath(xpath).each do |node|
-#        nodes.push(Hash[node.attributes.map { |k,v| [k,v.content]}])
-#      end
-      nodes = $doc.xpath(xpath)
-      puts "Nodes size = #{nodes.size}"
+      nodes = $doc.xpath(xpath).collect{|i|i}.sort{|a,b|a.attribute('id').to_s<=>b.attribute('id').to_s}
+      puts "XML entities = #{nodes.size}"
+
+      # Remove node if related project is not in the scope
+      unless nodes.size == 0 || nodes[0]['project'].nil?
+        nodes.delete_if{|node| $MAP_JIRA_PROJECT_ID_TO_KEY[node['project']].nil? }
+      end
+
+      # Remove node if related issue is not in the scope
+      unless nodes.size == 0 || nodes[0]['issue'].nil?
+        nodes.delete_if{|node| $MAP_JIRA_ISSUE_ID_TO_KEY[node['issue']].nil? }
+      end
+      puts "Filtered entities = #{nodes.size}"
+
       # Convert Hashes into objects
       objs = []
       nodes.each do |node|
@@ -249,11 +257,17 @@ module JiraMigration
       'jira_name'          => -32,
     }
 
+    attr_accessor :jira_project
+
     def self.parse(xpath = '/*/Project')
       objs = super(xpath)
       # Filter projects if required
       if !$JIRA_PRJ_FILTER.nil?
         objs.delete_if{|obj| obj.jira_key !~ /^#{$JIRA_PRJ_FILTER}$/ }
+      end
+      # Saving Jira id and key in a Map for later optimisation
+      objs.each do |obj|
+        $MAP_JIRA_PROJECT_ID_TO_KEY[obj.tag['id']] = obj.tag['key']
       end
       puts "Objects size = #{objs.size}"
       return objs
@@ -456,7 +470,7 @@ module JiraMigration
       'jira_assignee'      => -24,
     }
 
-    attr_reader  :jira_description, :jira_reporter, :jira_environment
+    attr_reader  :jira_summary, :jira_description, :jira_reporter, :jira_environment#, :jira_project
 
     def initialize(node)
       super
@@ -483,14 +497,17 @@ module JiraMigration
       #objs = super(xpath)
       objs = []
       nodes = $doc.xpath('/*/Issue').collect{|i|i}.sort{|a,b|a.attribute('id').to_s<=>b.attribute('id').to_s}
-      nodes.collect{|i|i}.sort{|a,b|a.attribute('id').to_s<=>b.attribute('id').to_s}
+      #nodes.collect{|i|i}.sort{|a,b|a.attribute('id').to_s<=>b.attribute('id').to_s}
+      puts "XML entities = #{nodes.size}"
+        
       # Process only relevant issues
-      if !$JIRA_PRJ_FILTER.nil?
+      unless $JIRA_PRJ_FILTER.nil?
         nodes.delete_if{|i| i['key'] !~ /^#{$JIRA_PRJ_FILTER}\-\d+$/ }
       end
-      if !$JIRA_KEY_FILTER.nil?
+      unless $JIRA_KEY_FILTER.nil?
         nodes.delete_if{|i| i['key'] !~ /^#{$JIRA_KEY_FILTER}$/ }
       end
+      puts "Filtered entities = #{nodes.size}"
       
       nodes.each do |node|
         $MAP_JIRA_ISSUE_ID_TO_KEY[node['id']] = node['key']
@@ -774,9 +791,9 @@ module JiraMigration
       # <PROJECTKEY>/<PROJECT-ID/<ISSUE-KEY>/<ATTACHMENT_ID>_filename.ext
       #
       # We have to recreate this path in order to copy the file
-      issue_key = $MAP_ISSUE_TO_PROJECT_KEY[self.jira_issue][:issue_key]
-      project_key = $MAP_ISSUE_TO_PROJECT_KEY[self.jira_issue][:project_key]
-      project_id = $MAP_ISSUE_TO_PROJECT_KEY[self.jira_issue][:project_id]
+      issue_key = $MAP_JIRA_ISSUE_ID_TO_KEY[self.jira_issue]
+      project_key = issue_key.gsub(/-\d+$/, '')
+      project_id = $MAP_JIRA_PROJECT_ID_TO_KEY.invert[project_key]
       jira_attachment_file = File.join(JIRA_ATTACHMENTS_DIR,
                                        project_key,
                                        #project_id,
@@ -934,12 +951,8 @@ module JiraMigration
   # Migrated Users by Name.
   $MIGRATED_USERS_BY_NAME = {}
 
-  # those maps are for parsing attachments optimisation. My jira xml was huge ~7MB, and parsing it for each attachment lasted for ever.
-  # Now needed data are parsed once and put into those maps, which makes all things much faster.
-  $MAP_ISSUE_TO_PROJECT_KEY = {}
-  $MAP_PROJECT_ID_TO_PROJECT_KEY = {}
-  
-  # Mapping of Jira isse id to Jira issue key for filtering
+  # Mapping of Jira id to Jira key to filter many objects and speed up attachment processing
+  $MAP_JIRA_PROJECT_ID_TO_KEY = {}
   $MAP_JIRA_ISSUE_ID_TO_KEY = {}
 
   ##########################
@@ -988,10 +1001,6 @@ module JiraMigration
     end
     $GHOST_USER = ghost
     ghost
-  end
-
-  #########################################
-  def self.find_version_by_jira_id(jira_id)
   end
 
   ##########################################
@@ -1340,21 +1349,9 @@ namespace :jira_migration do
   task :load_xml => :environment do
 
     file = File.new(JiraMigration::ENTITIES_FILE, 'r:utf-8')
-    # doc = REXML::Document.new(file)
-    doc = Nokogiri::XML(file,nil,'utf-8')
-    $doc = doc
+    $doc = Nokogiri::XML(file, nil, 'utf-8')
 
     $MIGRATED_USERS_BY_NAME = Hash[User.all.map{|u|[u.login, u]}] #{} # Maps the Jira username to the Redmine Rails User object
-
-    # $doc.elements.each("/*/Project") do |p|
-    $doc.xpath("/*/Project").each do |p|
-      $MAP_PROJECT_ID_TO_PROJECT_KEY[p['id']] = p['key']
-    end
-
-    #$doc.elements.each("/*/Issue") do |i|
-    $doc.xpath("/*/Issue").each do |i|
-      $MAP_ISSUE_TO_PROJECT_KEY[i["id"]] = { :project_id => i["project"], :project_key => $MAP_PROJECT_ID_TO_PROJECT_KEY[i["project"]], :issue_key => i['key']}
-    end
   end
 
   ##########################################################################
@@ -1552,56 +1549,56 @@ namespace :jira_migration do
   desc "Just pretty print Jira Projects on screen"
   task :test_parse_projects => :environment do
     projects = JiraMigration::JiraProject.parse
-    projects.each {|p| pp(p.run_all_redmine_fields) }
+    projects.each {|p| pp(p.run_all_redmine_fields) } if $PP
   end
 
   desc "Just pretty print Jira Users on screen"
   task :test_parse_users => :environment do
     # TODO: Rework to use JiraUser::parse
     users = JiraMigration.parse_jira_users()
-    users.each {|u| pp( u.run_all_redmine_fields) }
+    users.each {|u| pp( u.run_all_redmine_fields) } if $PP
   end
 
   desc "Just pretty print Jira Groups on screen"
   task :test_parse_groups => :environment do
     groups = JiraMigration::JiraGroup.parse
-    groups.each {|g| pp( g.run_all_redmine_fields) }
+    groups.each {|g| pp( g.run_all_redmine_fields) } if $PP
   end
 
   desc "Just pretty print Jira Versions on screen"
   task :test_parse_versions => :environment do
     versions = JiraMigration::JiraVersion.parse
-    versions.each {|c| pp( c.run_all_redmine_fields) }
+    versions.each {|c| pp( c.run_all_redmine_fields) } if $PP
   end
 
   desc "Just pretty print Jira Components on screen"
   task :test_parse_components => :environment do
     categories = JiraMigration::JiraComponent.parse
-    categories.each {|c| pp( c.run_all_redmine_fields) }
+    categories.each {|c| pp( c.run_all_redmine_fields) } if $PP
   end
 
   desc "Just pretty print Jira Custom Fields on screen"
   task :test_parse_custom_fields => :environment do
     fields = JiraMigration::JiraCustomField.parse
-    fields.each {|c| pp( c.run_all_redmine_fields) }
+    fields.each {|c| pp( c.run_all_redmine_fields) } if $PP
   end
 
   desc "Just pretty print Jira Issues on screen"
   task :test_parse_issues => :environment do
     issues = JiraMigration::JiraIssue.parse
-    issues.each {|i| pp( i.run_all_redmine_fields) }
+    issues.each {|i| pp( i.run_all_redmine_fields) } if $PP
   end
 
   desc "Just pretty print Jira Comments on screen"
   task :test_parse_comments => :environment do
     comments = JiraMigration::JiraComment.parse
-    comments.each {|c| pp( c.run_all_redmine_fields) }
+    comments.each {|c| pp( c.run_all_redmine_fields) } if $PP
   end
 
   desc "Just pretty print Jira Attachments on screen"
   task :test_parse_attachments => :environment do
     attachs = JiraMigration::JiraAttachment.parse
-    attachments.each {|i| pp( i.run_all_redmine_fields) }
+    attachs.each {|i| pp( i.run_all_redmine_fields) } if $PP
   end
 
   ##################################### Running all tests ##########################################
