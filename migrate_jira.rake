@@ -323,14 +323,6 @@ module JiraMigration
       return objs
     end
 
-    def jira_marker
-      marker = "FROM JIRA: #{$MAP_PROJECT_ID_TO_PROJECT_KEY[self.jira_project]}\n"
-      if !$JIRA_WEB_URL.nil?
-        marker = "FROM JIRA: \"#{$MAP_PROJECT_ID_TO_PROJECT_KEY[self.jira_project]}\":#{$JIRA_WEB_URL}/browse/#{$MAP_PROJECT_ID_TO_PROJECT_KEY[self.jira_project]}\n"
-      end
-      return marker 
-    end
-
     def retrieve
       self.class::DEST_MODEL.find_by_name(self.jira_name)
     end
@@ -519,16 +511,11 @@ module JiraMigration
       return objs
     end
 
-    def jira_marker
-      marker = "FROM JIRA: #{self.jira_key}"
-      if !$JIRA_WEB_URL.nil?
-        marker = "FROM JIRA: \"#{self.jira_key}\":#{$JIRA_WEB_URL}/browse/#{self.jira_key}"
-      end
-      return marker 
-    end
-
     def retrieve
-      Issue.where("description Like '#{self.jira_marker}%'").first()
+      # Retrieve existing issue based on Key Custom Field
+      custom_field = IssueCustomField.find_by_name('Key')
+      custom_value = CustomValue.where("custom_field_id = '#{custom_field.id}' AND customized_type = 'Issue' AND value = '#{self.jira_key}'").last
+      Issue.find_by_id(custom_value.customized_id) unless custom_value.nil?
     end
 
     def red_project
@@ -537,6 +524,7 @@ module JiraMigration
     end
 
     def red_fixed_version
+      # TODO: imlement this as a separate step after, or preload before to reduce disk I/O 
       path = "/*/NodeAssociation[@sourceNodeId=\"#{self.jira_id}\" and @sourceNodeEntity=\"Issue\" and @sinkNodeEntity=\"Version\" and @associationType=\"IssueFixVersion\"]"
       assocs = JiraMigration.get_list_from_tag(path)
       versions = []
@@ -544,10 +532,12 @@ module JiraMigration
         version = JiraVersion::MAP[assoc["sinkNodeId"]]
         versions.push(version)
       end
+      # Can only associate to one Redmine version, unlike in Jira, choosing the last one so
       versions.last
     end
 
     def red_category
+      # TODO: imlement this as a separate step after, or preload before to reduce disk I/O 
       path = "/*/NodeAssociation[@sourceNodeId=\"#{self.jira_id}\" and @sourceNodeEntity=\"Issue\" and @sinkNodeEntity=\"Component\" and @associationType=\"IssueComponent\"]"
       assocs = JiraMigration.get_list_from_tag(path)
 
@@ -556,70 +546,16 @@ module JiraMigration
         category = JiraComponent::MAP[assoc["sinkNodeId"]]
         categories.push(category)
       end
+      # Can only associate to one Redmine category, unlike in Jira, choosing the last one so
       categories.last
-    end
-
-  	def get_change_groups_of_issue(issueId)
-  	  path = "/*/ChangeGroup[@issue=\"#{issueId}\"]/@id"
-        groupIdAtts = $doc.xpath(path)
-        groupIds = []
-        groupIdAtts.each do |item|
-          groupIds.push(item.content)
-        end
-  	  return groupIds
-  	end  
-
-  	def get_sprint_changes_of_specific_group(groupId)
-  	  path = "/*/ChangeItem[@group=\"#{groupId}\" and @fieldtype=\"custom\" and @field=\"Sprint\"]/@newstring"
-  	  sprintAttributes = $doc.xpath(path)
-        sprints = []
-  	  latestSprint = ""
-        sprintAttributes.each do |item|		
-  	    if (item.content.length != 0)
-  		    latestSprint = item.content
-  		  end  
-      end
-  	  return latestSprint 
-  	end
-
-  	def get_previous_sprints
-      groupIds = get_change_groups_of_issue(self.jira_id)
-      sprints = []
-      selected = ""
-      currentSprint = ""
-      groupIds.each do |item|
-        if (item != nil and item.to_s != '')
-          currentSprint = get_sprint_changes_of_specific_group(item)
-          if (currentSprint.length !=0)
-            selected = currentSprint
-          end
-          sprints.push(currentSprint)
-        end
-      end
-  	  #puts("This is the jira id: #{self.jira_id} and this is the selected sprint: #{selected} out of: #{sprints}")	  
-  	  return selected
     end
 
     def red_subject
       self.jira_summary
     end
 	
-    # TODO: Reactivate this commented section, but it needs to be faster.
     def red_description
-# 	  sprints = get_previous_sprints
-# 	  if (sprints.to_s == '')
-# 	    dsc = "#{self.jira_marker}\n%s" % @jira_description
-# 	  else
-# 	    dsc = "#{self.jira_marker}\n Sprints: #{get_previous_sprints}\n\n%s" % @jira_description 
-#       end	
-#       return dsc	  
-      dsc = self.jira_marker + "\n"
-      if @jira_description
-        dsc += @jira_description
-      else
-        dsc += self.red_subject
-      end
-      return dsc
+      self.jira_description || self.jira_summary
     end
 
     def red_priority
@@ -730,18 +666,11 @@ module JiraMigration
       return objs
     end
 
-    def jira_marker
-      return "FROM JIRA: #{self.jira_id}"
-    end
-
     def retrieve
-      Journal.where(notes: "LIKE '#{self.jira_marker}%'").first()
+      Journal.where(notes: "LIKE '#{self.red_notes}'").first()
     end
 
-    # here is the tranformation of Jira attributes in Redmine attribues
     def red_notes
-      # You can have the marker in the notes, if you want. Else only the body will be migrated
-      #self.jira_marker + "\n" + @jira_body
       @jira_body
     end
 
@@ -1538,11 +1467,9 @@ namespace :jira_migration do
   desc "Migrates Jira Issues Attachments to Redmine Attachments"
   task :migrate_attachments => :environment do
     attachs = JiraMigration::JiraAttachment.parse
-    attachs.reject!{|attach|attach.red_container.nil?}
-    attachs.each do |a|
-      #pp(c)
-      a.migrate
-    end
+    attrf = JiraMigration::JiraAttachment::ATTRF
+    created = JiraMigration.migrate(attachs, attrf)
+    puts "Migrated attachments (#{created}/#{attachs.size})"
   end
 
   ##################################### Tests ##########################################
