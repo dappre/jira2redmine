@@ -17,10 +17,12 @@ module JiraMigration
   JIRA_ATTACHMENTS_DIR = 'data/attachments'
   ############## Jira URL
   $JIRA_WEB_URL = nil
-  ############## Project filter (ex: "MYPRJ" or "(MYPRJA|MYPRJB)"
+  ############## Project filter (ex: 'MYPRJ' or '(MYPRJA|MYPRJB)'
   $JIRA_PRJ_FILTER = nil
   ############## Issue key filter (ex: '[^-]+-\d{1,2}' or '(MYPRJA-\d+|MYPRJB-\d{1,2})'
   $JIRA_KEY_FILTER = nil
+  ############## Pretty print objects while testing
+  $PP = false
 
   roles = Role.where(:builtin => 0).order('position ASC').all
   ROLE_MAPPING = {
@@ -697,6 +699,33 @@ module JiraMigration
   class JiraAttachment < BaseJira
     DEST_MODEL = Attachment
     MAP = {}
+    ATTRF = {
+      'jira_id'            => 12,
+      'jira_issue'         => 12,
+      'jira_filename'      => -64,
+      'file_check'         => 10,
+    }
+
+    attr_reader  :jira_filename, :file_check
+
+    def initialize(node)
+      super(node)
+      # No idea why, but sometime, ' - ' have been replaced by '  '
+      # So we try to mitigate if file does not exists
+      @jira_filename = node['filename'].gsub(/ ­ /, ' - ') unless File.exists?(self.get_filepath)
+
+      # Check the file on disk
+      filepath = self.get_filepath
+      if File.exists?(self.get_filepath)
+        if File.size(filepath) < Setting.attachment_max_size.to_i * 1024
+          @file_check = 'ok'
+        else
+          @file_check = 'too big'
+        end
+      else
+        @file_check = 'not found'
+      end
+    end
 
     def self.parse(xpath = '/*/FileAttachment')
       objs = super(xpath)
@@ -704,14 +733,7 @@ module JiraMigration
       return objs
     end
 
-    def retrieve
-      nil
-    end
-
-    def before_save(new_record)
-      new_record.container = self.red_container
-      #pp(new_record)
-
+    def get_filepath
       # JIRA stores attachments as follows:
       # <PROJECTKEY>/<PROJECT-ID/<ISSUE-KEY>/<ATTACHMENT_ID>_filename.ext
       #
@@ -719,27 +741,32 @@ module JiraMigration
       issue_key = $MAP_JIRA_ISSUE_ID_TO_KEY[self.jira_issue]
       project_key = issue_key.gsub(/-\d+$/, '')
       project_id = $MAP_JIRA_PROJECT_ID_TO_KEY.invert[project_key]
-      jira_attachment_file = File.join(JIRA_ATTACHMENTS_DIR,
-                                       project_key,
-                                       #project_id,
-                                       issue_key,
-                                       "#{self.jira_id}_#{self.jira_filename}"
-                                       )
-      printf("%-16s | %-.64s | ", issue_key, jira_attachment_file)
-      if File.exists? jira_attachment_file
-      	file_size = File.size(jira_attachment_file)
-      	if file_size < Setting.attachment_max_size.to_i * 1024
-          new_record.file = File.open(jira_attachment_file)
-          printf("%10s | %16s bytes\n", 'processing', file_size.to_s)
-        else
-          printf("%24s | %16s bytes\n", 'skipping - too big', file_size.to_s)
-        end
-        #redmine_attachment_file = File.join(Attachment.storage_path, new_record.disk_filename)
+      filepath = File.join(
+        JIRA_ATTACHMENTS_DIR,
+        project_key,
+        #project_id, # Not sure for which version of Jira this was needed
+        issue_key,
+        "#{self.jira_id}_#{self.jira_filename}"
+      )
+      return filepath
+    end
 
-        # puts "Copying attachment [#{jira_attachment_file}] to [#{redmine_attachment_file}]"
-        #FileUtils.cp jira_attachment_file, redmine_attachment_file
-      else
-        printf("%24s | %16s\n", 'skipping - not found', '-')
+    def retrieve
+      # Retrieve any existing ActiveRecord
+      query = "container_id = '#{self.red_container.id}'"
+      query += " AND container_type = 'Issue'"
+      query += " AND author_id = '#{self.red_author.id}'"
+      query += " AND created_on = '#{self.jira_created}'"
+      query += " AND filename = '#{self.red_filename}'"
+      record = Attachment.where(query).last
+      return record
+    end
+
+    def before_save(new_record)
+      new_record.container = self.red_container
+      # Skip file upload if not ok (not found or too big)
+      if self.file_check == 'ok'
+        new_record.file = File.open(self.get_filepath)
       end
     end
 
