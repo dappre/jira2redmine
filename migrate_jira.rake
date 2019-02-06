@@ -651,6 +651,12 @@ module JiraMigration
   class JiraComment < BaseJira
     DEST_MODEL = Journal
     MAP = {}
+    ATTRF = {
+      'jira_id'            => 12,
+      'jira_issue'         => 12,
+      'jira_body'          => -56,
+      'jira_author'        => 16,
+    }
 
     def initialize(node)
       super(node)
@@ -667,7 +673,12 @@ module JiraMigration
     end
 
     def retrieve
-      Journal.where(notes: "LIKE '#{self.red_notes}'").first()
+      # Retrieve any existing ActiveRecord
+      query = "journalized_id = '#{red_journalized.id}'"
+      query += " AND journalized_type = 'Issue'"
+      query += " AND user_id = '#{self.red_user.id}'"
+      query += " AND created_on = '#{self.jira_created}'"
+      Journal.where(query).last()
     end
 
     def red_notes
@@ -1479,11 +1490,9 @@ namespace :jira_migration do
   desc "Migrates Jira Issues Comments to Redmine Issues Journals (Notes)"
   task :migrate_comments => :environment do
     comments = JiraMigration::JiraComment.parse
-    comments.reject!{|comment|comment.red_journalized.nil?}
-    comments.each do |c|
-      #pp(c)
-      c.migrate
-    end
+    attrf = JiraMigration::JiraComment::ATTRF
+    created = JiraMigration.migrate(comments, attrf)
+    puts "Migrated comments (#{created}/#{comments.size})"
   end
 
   ##############################################################
