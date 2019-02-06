@@ -144,10 +144,10 @@ module JiraMigration
     MAP = {}
     ATTRF = {
       'jira_id'            => 12,
-      'jira_name'          => -24,
-      'jira_emailAddress'  => -32,
-      'jira_firstName'     => -24,
-      'jira_lastName'      => -32,
+      'jira_name'          => -18,
+      'jira_emailAddress'  => -24,
+      'jira_firstName'     => -18,
+      'jira_lastName'      => -18,
     }
 
     attr_accessor  :jira_emailAddress, :jira_name, :jira_firstName, :jira_lastName
@@ -357,7 +357,7 @@ module JiraMigration
     ATTRF = { # Main attribute names with best display size
       'jira_id'            => 12,
       'red_project'        => 24,
-      'red_name'           => -64,
+      'red_name'           => -48,
       'jira_lead'          => -24,
     }
 
