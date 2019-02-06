@@ -439,13 +439,13 @@ module JiraMigration
     end
 
     def post_migrate(new_record, is_new)
-      if is_new
-        new_record.trackers = Tracker.all
-        JiraProject::MAP.each do |jira_project, red_project|
-          new_record.projects << red_project
-        end
-        new_record.reload
+      # Allow this field for all Trackers if not already done
+      new_record.trackers = Tracker.all if new_record.trackers.nil?
+      # Allow this field for all migrated projects if not already done
+      JiraProject::MAP.each do |jira_project, red_project|
+        new_record.projects << red_project unless new_record.projects.include? red_project
       end
+      new_record.reload
     end
   end
 
@@ -660,8 +660,6 @@ module JiraMigration
 
     def self.parse(xpath = '/*/Action[@type="comment"]')
       objs = super(xpath)
-      # Remove comment if related issue is not in the scope
-      objs.delete_if{|obj| $MAP_JIRA_ISSUE_ID_TO_KEY[obj.jira_issue].nil? }
       puts "Objects size = #{objs.size}"
       return objs
     end
@@ -702,8 +700,6 @@ module JiraMigration
 
     def self.parse(xpath = '/*/FileAttachment')
       objs = super(xpath)
-      # Remove attachment if related issue is not in the scope
-      objs.delete_if{|obj| $MAP_JIRA_ISSUE_ID_TO_KEY[obj.jira_issue].nil? }
       puts "Objects size = #{objs.size}"
       return objs
     end
@@ -751,7 +747,7 @@ module JiraMigration
     #<FileAttachment id="10084" issue="10255" mimetype="image/jpeg" filename="Landing_Template.jpg"
     #                created="2011-05-05 15:54:59.411" filesize="236515" author="emiliano"/>
     def red_filename
-      self.jira_filename.gsub(/[^\w\.\-]/,'_')  # stole from Redmine: app/model/attachment (methods sanitize_filenanme)
+      self.jira_filename.gsub(/[^\w\.\-]/,'_')  # stole from Redmine: app/model/attachment (methods sanitize_filename)
     end
 
     # def red_disk_filename
