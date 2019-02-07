@@ -137,6 +137,16 @@ module JiraMigration
     def retrieve
       self.class::DEST_MODEL.find_by_name(self.jira_id)
     end
+
+    #####################
+    def encode_for(text, attribute)
+      ret_text = ''
+      if !text.nil?
+        enc_text = text.to_s.force_encoding('UTF-8').encode('UTF-8')
+        ret_text = enc_text[0, self.class::DEST_MODEL.columns_hash[attribute.to_s].limit]
+      end
+      return ret_text
+    end
   end
 
   ###############################
@@ -177,18 +187,20 @@ module JiraMigration
     # First Name, Last Name, E-mail, Password
     # here is the tranformation of Jira attributes in Redmine attribues
     def red_firstname
-      self.jira_firstName
+      self.encode_for(self.jira_firstName, 'firstname')
     end
 
     def red_lastname
-      self.jira_lastName
+      self.encode_for(self.jira_lastName, 'lastname')
     end
 
     def red_mail
+      # Should fail validation if too long
       self.jira_emailAddress
     end
 
     def red_login
+      # Should fail validation if too long
       self.jira_name
     end
 
@@ -244,6 +256,7 @@ module JiraMigration
     end
 
     def red_name
+      # Should fail validation if too long
       self.jira_name
     end
   end
@@ -294,11 +307,11 @@ module JiraMigration
 
     # here is the tranformation of Jira attributes in Redmine attribues
     def red_name
-      self.jira_name
+      self.encode_for(self.jira_name, 'name')
     end
 
     def red_description
-      self.jira_name
+      self.encode_for(self.jira_description, 'description')
     end
 
     def red_identifier
@@ -335,11 +348,11 @@ module JiraMigration
     end
 
     def red_name
-      self.jira_name
+      self.encode_for(self.jira_name, 'name')
     end
 
     def red_description
-      self.jira_description
+      self.encode_for(self.jira_description, 'description')
     end
 
     def red_due_date
@@ -374,7 +387,7 @@ module JiraMigration
     end
 
     def red_name
-      JiraMigration.encode(self.jira_name[0, JiraMigration::limit_for(IssueCategory, 'name')])
+      self.encode_for(self.jira_name, 'name')
     end
 
     def red_assigned_to_id
@@ -428,7 +441,8 @@ module JiraMigration
     end
 
     def red_name
-      return JiraMigration.encode(self.jira_name[0, JiraMigration::limit_for(IssueCustomField, 'name')])
+      # Should fail validation if too long
+      self.jira_name
     end
 
     def red_field_format
@@ -531,14 +545,15 @@ module JiraMigration
 
     def red_category
       # Implemented in a later separated step for better performance
+      nil
     end
 
     def red_subject
-      self.jira_summary
+      self.encode_for(self.jira_summary, 'subject')
     end
 	
     def red_description
-      self.jira_description || self.jira_summary
+      self.encode_for(self.jira_description, 'description')
     end
 
     def red_priority
@@ -925,20 +940,6 @@ module JiraMigration
     ret["custom_field_types"] = self.get_jira_custom_field_types()
 
     return ret
-  end
-
-  ###############################################
-  # Return the limit size of an Redmine attribute
-  def self.limit_for(klass, attribute)
-    klass.columns_hash[attribute.to_s].limit
-  end
-
-  #####################
-  def self.encode(text)
-  	if text.nil?
-  	  text = ''
-  	end
-    text.to_s.force_encoding('UTF-8').encode('UTF-8')
   end
 
   ##################################
