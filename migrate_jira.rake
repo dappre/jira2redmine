@@ -370,7 +370,7 @@ module JiraMigration
     MAP = {}
     ATTRF = { # Main attribute names with best display size
       'jira_id'            => 12,
-      'red_project'        => 24,
+      'red_project'        => -24,
       'red_name'           => -48,
       'jira_lead'          => -24,
     }
@@ -993,12 +993,24 @@ module JiraMigration
     assocs = JiraMigration.get_list_from_tag(path)
 
     puts "Migrating #{assocs.size} associations between issues and fixed versions"
-    printf("%12.12s | %12.12s | %-24.24s | %-10.10s | %-12.12s\n",
+
+    sep = 82
+    vsep = " \\ "
+    hsep = '\\'
+
+    # Print header
+    1.upto(sep).each { putc(hsep) }
+    puts
+    printf("%12.12s#{vsep}%12.12s#{vsep}%-24.24s#{vsep}%-10.10s#{vsep}%12.12s\n",
       'jira_version',
       'jira_issue',
       'jira_name',
       'status',
       'red_id')
+    1.upto(sep).each { putc(hsep) }
+    puts
+      
+    # Print attributes
     assocs.each do |assoc|
       version = JiraVersion::MAP[assoc['sinkNodeId']]
       # Only process relevant assoc (should be nil if project is ignored)
@@ -1014,18 +1026,22 @@ module JiraMigration
       	    status = 'udpated'
       	  end
 
-          printf("%12.12s | %12.12s | %-24.24s | %-10.10s | %-12.12s\n",
+          printf("%12.12s#{vsep}%12.12s#{vsep}%-24.24s#{vsep}%-10.10s#{vsep}%12.12s\n",
             assoc['sinkNodeId'].to_s,
             assoc['sourceNodeId'].to_s,
             version['name'],
             status,
-            issue.id
+            issue.id.to_s,
           )
           issue.update_column(:fixed_version_id, version.id) unless status == 'exists'
           issue.reload
         end
       end
     end
+    
+    # Print footer
+    1.upto(sep).each { putc(hsep) }
+    puts
   end
 
   #################################
@@ -1034,28 +1050,55 @@ module JiraMigration
     assocs = JiraMigration.get_list_from_tag(path)
 
     puts "Migrating #{assocs.size} associations between issues and categories"
-    printf("%12.12s | %12.12s | %-24.24s | %-12.12s\n",
+
+    sep = 82
+    vsep = " \\ "
+    hsep = '\\'
+
+    # Print header
+    1.upto(sep).each { putc(hsep) }
+    puts
+    printf("%12.12s#{vsep}%12.12s#{vsep}%-24.24s#{vsep}%-10.10s#{vsep}%12.12s\n",
       'jira_id',
       'jira_component',
       'jira_name',
+      'status',
       'red_id')
+    1.upto(sep).each { putc(hsep) }
+    puts
+      
+    # Print attributes
     assocs.each do |assoc|
       category = JiraComponent::MAP[assoc["sinkNodeId"]]
       # Only process relevant assoc (should be nil if project is ignored)
       if !category.nil?
       issue = JiraIssue::MAP[assoc['sourceNodeId']]
         if !issue.nil?
-          printf("%12.12s | %12.12s | %-24.24s | %-12.12s\n",
+          status = 'exists'
+          if issue.category_id.nil?
+            status = 'created'
+          elsif issue.category_id < category.id
+            # Redmine category_id is unique, unlike component in JIRA
+            # So we choose to use the highest id (sort of last related component)
+            status = 'udpated'
+          end
+
+          printf("%12.12s#{vsep}%12.12s#{vsep}%-24.24s#{vsep}%-10.10s#{vsep}%12.12s\n",
             assoc['sinkNodeId'].to_s,
             assoc['sourceNodeId'].to_s,
             category['name'],
-            issue.id
+            status,
+            issue.id.to_s,
           )
           issue.update_column(:category_id, category.id)
           issue.reload
         end
       end
     end
+
+    # Print footer
+    1.upto(sep).each { putc(hsep) }
+    puts
   end
 
   #############################
@@ -1344,6 +1387,8 @@ module JiraMigration
       end
       printf("%12s\n", obj.new_record.id.to_s)
     end
+
+    # Print footer
     1.upto(sep).each { putc(hsep) }
     puts
     return created
