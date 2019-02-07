@@ -347,7 +347,6 @@ module JiraMigration
         Time.parse(self.jira_releasedate)
       end
     end
-
   end
 
   ####################################
@@ -379,7 +378,7 @@ module JiraMigration
     end
 
     def red_assigned_to_id
-      JiraMigration.find_user_by_jira_name(self.jira_lead)
+      JiraMigration.find_user_by_jira_name(self.jira_lead).id
     end
 
     def retrieve
@@ -993,10 +992,11 @@ module JiraMigration
     assocs = JiraMigration.get_list_from_tag(path)
 
     puts "Migrating #{assocs.size} associations between issues and fixed versions"
-    printf("%12.12s | %12.12s | %-24.24s | %-12.12s\n",
-      'jira_id',
+    printf("%12.12s | %12.12s | %-24.24s | %-10.10s | %-12.12s\n",
       'jira_version',
+      'jira_issue',
       'jira_name',
+      'status',
       'red_id')
     assocs.each do |assoc|
       version = JiraVersion::MAP[assoc['sinkNodeId']]
@@ -1004,13 +1004,23 @@ module JiraMigration
       if !version.nil?
     	issue = JiraIssue::MAP[assoc['sourceNodeId']]
       	if !issue.nil?
-          printf("%12.12s | %12.12s | %-24.24s | %-12.12s\n",
+      	  status = 'exists'
+      	  if issue.fixed_version_id.nil?
+      	    status = 'created'
+      	  elsif issue.fixed_version_id > version.id
+            # Redmine fixed_version is unique, unlike in JIRA
+            # So we choose to use the lowest id (sort of first version where it has been fixed)
+      	    status = 'udpated'
+      	  end
+
+          printf("%12.12s | %12.12s | %-24.24s | %-10.10s | %-12.12s\n",
             assoc['sinkNodeId'].to_s,
             assoc['sourceNodeId'].to_s,
             version['name'],
+            status,
             issue.id
           )
-          issue.update_column(:fixed_version_id, version.id)
+          issue.update_column(:fixed_version_id, version.id) unless status == 'exists'
           issue.reload
         end
       end
