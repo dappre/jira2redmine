@@ -526,30 +526,12 @@ module JiraMigration
     end
 
     def red_fixed_version
-      # TODO: imlement this as a separate step after, or preload before to reduce disk I/O 
-      path = "/*/NodeAssociation[@sourceNodeId=\"#{self.jira_id}\" and @sourceNodeEntity=\"Issue\" and @sinkNodeEntity=\"Version\" and @associationType=\"IssueFixVersion\"]"
-      assocs = JiraMigration.get_list_from_tag(path)
-      versions = []
-      assocs.each do |assoc|
-        version = JiraVersion::MAP[assoc["sinkNodeId"]]
-        versions.push(version)
-      end
-      # Can only associate to one Redmine version, unlike in Jira, choosing the last one so
-      versions.last
+      # Implemented in a later separated step for better performance
+      nil
     end
 
     def red_category
-      # TODO: imlement this as a separate step after, or preload before to reduce disk I/O 
-      path = "/*/NodeAssociation[@sourceNodeId=\"#{self.jira_id}\" and @sourceNodeEntity=\"Issue\" and @sinkNodeEntity=\"Component\" and @associationType=\"IssueComponent\"]"
-      assocs = JiraMigration.get_list_from_tag(path)
-
-      categories = []
-      assocs.each do |assoc|
-        category = JiraComponent::MAP[assoc["sinkNodeId"]]
-        categories.push(category)
-      end
-      # Can only associate to one Redmine category, unlike in Jira, choosing the last one so
-      categories.last
+      # Implemented in a later separated step for better performance
     end
 
     def red_subject
@@ -994,26 +976,57 @@ module JiraMigration
   #################################
   def self.migrate_fixed_versions()
     path = "/*/NodeAssociation[@sourceNodeEntity=\"Issue\" and @sinkNodeEntity=\"Version\" and @associationType=\"IssueFixVersion\"]"
-    associations = JiraMigration.get_list_from_tag(path)
+    assocs = JiraMigration.get_list_from_tag(path)
 
-    printf("%12s | %12s | %-24s | %-12s\n",
-      'issue_jid',
-      'version_jid',
-      'version_name',
-      'issue_rid')
-    associations.each do |assoc|
-      # Only process relevant assoc (should be nil if project is ignored)
+    puts "Migrating #{assocs.size} associations between issues and fixed versions"
+    printf("%12.12s | %12.12s | %-24.24s | %-12.12s\n",
+      'jira_id',
+      'jira_version',
+      'jira_name',
+      'red_id')
+    assocs.each do |assoc|
       version = JiraVersion::MAP[assoc['sinkNodeId']]
+      # Only process relevant assoc (should be nil if project is ignored)
       if !version.nil?
     	issue = JiraIssue::MAP[assoc['sourceNodeId']]
       	if !issue.nil?
-          printf("%12i | %12i | %-24s | %-12s\n",
+          printf("%12.12i | %12.12i | %-24.24s | %-12.12s\n",
             assoc['sinkNodeId'],
             assoc['sourceNodeId'],
             version['name'],
             issue.id
           )
           issue.update_column(:fixed_version_id, version.id)
+          issue.reload
+        end
+      end
+    end
+  end
+
+  #################################
+  def self.migrate_categories()
+    path = "/*/NodeAssociation[@sourceNodeEntity=\"Issue\" and @sinkNodeEntity=\"Component\" and @associationType=\"IssueComponent\"]"
+    assocs = JiraMigration.get_list_from_tag(path)
+
+    puts "Migrating #{assocs.size} associations between issues and categories"
+    printf("%12.12s | %12.12s | %-24.24s | %-12.12s\n",
+      'jira_id',
+      'jira_component',
+      'jira_name',
+      'red_id')
+    assocs.each do |assoc|
+      category = JiraComponent::MAP[assoc["sinkNodeId"]]
+      # Only process relevant assoc (should be nil if project is ignored)
+      if !category.nil?
+      issue = JiraIssue::MAP[assoc['sourceNodeId']]
+        if !issue.nil?
+          printf("%12.12i | %12.12i | %-24.24s | %-12.12s\n",
+            assoc['sinkNodeId'],
+            assoc['sourceNodeId'],
+            category['name'],
+            issue.id
+          )
+          issue.update_column(:category_id, category.id)
           issue.reload
         end
       end
@@ -1482,6 +1495,7 @@ namespace :jira_migration do
 
     # TODO: Implement this is JiraIssue::post_migrate, if possible
     JiraMigration.migrate_fixed_versions
+    JiraMigration.migrate_categories
     JiraMigration.migrate_issue_links
     JiraMigration.migrate_worktime
   end
