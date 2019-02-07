@@ -640,6 +640,8 @@ module JiraMigration
       'jira_author'        => 16,
     }
 
+    attr_reader  :jira_body
+
     def initialize(node)
       super(node)
       # get a body from a comment
@@ -655,12 +657,24 @@ module JiraMigration
     end
 
     def retrieve
+      record = nil
       # Retrieve any existing ActiveRecord
       query = "journalized_id = '#{red_journalized.id}'"
       query += " AND journalized_type = 'Issue'"
       query += " AND user_id = '#{self.red_user.id}'"
       query += " AND created_on = '#{self.jira_created}'"
-      Journal.where(query).last()
+      records = Journal.where(query)
+      unless records.nil?
+        if records.size == 1
+          record = records[0]
+        elsif records.size > 1
+          # Only compare text if we got more than one
+          records.each do |rec|
+            record = rec if rec.notes == self.red_notes
+          end
+        end
+      end
+      return record
     end
 
     def red_notes
@@ -990,9 +1004,9 @@ module JiraMigration
       if !version.nil?
     	issue = JiraIssue::MAP[assoc['sourceNodeId']]
       	if !issue.nil?
-          printf("%12.12i | %12.12i | %-24.24s | %-12.12s\n",
-            assoc['sinkNodeId'],
-            assoc['sourceNodeId'],
+          printf("%12.12s | %12.12s | %-24.24s | %-12.12s\n",
+            assoc['sinkNodeId'].to_s,
+            assoc['sourceNodeId'].to_s,
             version['name'],
             issue.id
           )
@@ -1020,9 +1034,9 @@ module JiraMigration
       if !category.nil?
       issue = JiraIssue::MAP[assoc['sourceNodeId']]
         if !issue.nil?
-          printf("%12.12i | %12.12i | %-24.24s | %-12.12s\n",
-            assoc['sinkNodeId'],
-            assoc['sourceNodeId'],
+          printf("%12.12s | %12.12s | %-24.24s | %-12.12s\n",
+            assoc['sinkNodeId'].to_s,
+            assoc['sourceNodeId'].to_s,
             category['name'],
             issue.id
           )
@@ -1287,7 +1301,7 @@ module JiraMigration
     # Print attributes
     objs.each do |obj|
       attrs.each do |name,format|
-        att = '-'
+        att = nil
         begin
           # Try to call the getter method first
           att = obj.send(name)
@@ -1295,7 +1309,12 @@ module JiraMigration
           # Fallback on the attribute
           att = obj[name] unless obj[name].nil?
         end
-        printf("%#{format.to_s}.#{format.to_s.sub('-', '')}s#{vsep}", att)
+        if att.nil?
+          att_string = '-'
+        else
+          att_string = att.to_s.each_line.first.chomp
+        end
+        printf("%#{format.to_s}.#{format.to_s.sub('-', '')}s#{vsep}", att_string)
       end
       begin
         obj.migrate
