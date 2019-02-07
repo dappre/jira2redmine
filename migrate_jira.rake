@@ -1154,35 +1154,57 @@ module JiraMigration
     # Set Issue Links
     issue_links = self.get_list_from_tag('/*/IssueLink')
     puts("Collected #{issue_links.length} issue links")
+    children = 0
+    other = 0
     issue_links.each do |link|
       linktype = migrated_issue_link_types[link['linktype']]
       issue_from = JiraIssue::MAP[link['source']]
       issue_to = JiraIssue::MAP[link['destination']]
       # Only process relevant links
       if !issue_from.nil? && !issue_to.nil?
-        if linktype.downcase == 'subtask' || linktype.downcase == 'epic-story'
-          #pp "Set Parent #{issue_from.id} to:", issue_to
-          to_updated_on = issue_to.updated_on
-          from_updated_on = issue_from.updated_on
-          issue_to.update_attribute(:parent_issue_id, issue_from.id)
-          issue_to.reload
-          issue_to.update_column :updated_on, to_updated_on
-          issue_from.update_column :updated_on, from_updated_on
-          issue_to.reload
-          issue_from.reload
+        if linktype.downcase =~ /(subtask|epic-story)/
+          printf("Issue #{issue_to.id} has #{issue_from.id} as parent: ") 
+          # Only updating if needed
+          if issue_to.parent_issue_id.nil?
+            # Saving timestamps
+            to_updated_on = issue_to.updated_on
+            from_updated_on = issue_from.updated_on
+            # Updating parent link
+            issue_to.update_attribute(:parent_issue_id, issue_from.id)
+            issue_to.reload
+            # Restoring timestamps
+            issue_to.update_column :updated_on, to_updated_on
+            issue_from.update_column :updated_on, from_updated_on
+            issue_to.reload
+            issue_from.reload
+            children += 1
+            puts "updated"
+          else
+            puts "exists"
+          end
         else
-          r = IssueRelation.new(:relation_type => linktype, :issue_from => issue_from, :issue_to => issue_to)
-		  puts "setting relation between: #{issue_from.id} to: #{issue_to.id}"
-		  begin
-		    r.save!
-		    r.reload
-		  rescue Exception => e
-		    puts "FAILED setting #{linktype} relation from: #{issue_from.id} to: #{issue_to.id} because of #{e.message}"
-		  end
-		  puts "After saving the relation"
-		end
+          printf("Issue #{issue_to.id} #{linktype.downcase} to #{issue_from.id}: ")
+          query = "relation_type = '#{linktype}'"
+          query += " AND (issue_from_id = '#{issue_from.id}' AND issue_to_id = '#{issue_to.id}')"
+          query += " OR (issue_from_id = '#{issue_to.id}' AND issue_to_id = '#{issue_from.id}')"
+          if IssueRelation.where(query).empty?
+            r = IssueRelation.new(:relation_type => linktype, :issue_from => issue_from, :issue_to => issue_to)
+      		  puts "setting relation between: #{issue_from.id} to: #{issue_to.id}"
+      		  begin
+      		    r.save!
+      		    r.reload
+      		  rescue Exception => e
+      		    puts "FAILED setting #{linktype} relation from: #{issue_from.id} to: #{issue_to.id} because of #{e.message}"
+      		  end
+            other += 1
+            puts "created"
+          else
+            puts "exists" 
+          end
+    		end
       end
     end
+    puts("Migrated #{children} children + #{other} other issue links")
   end
 
   ###########################
