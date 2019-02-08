@@ -391,7 +391,11 @@ module JiraMigration
     end
 
     def red_assigned_to_id
-      JiraMigration.find_user_by_jira_name(self.jira_lead).id
+      if self.jira_assignee
+        JiraMigration.find_user_by_jira_name(self.jira_assignee)
+      else
+        nil
+      end
     end
 
     def retrieve
