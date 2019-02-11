@@ -476,9 +476,11 @@ module JiraMigration
     ATTRF = {
       'jira_id'            => 12,
       'jira_key'           => -12,
-      'red_tracker'        => -24,
-      'jira_reporter'      => -24,
-      'jira_assignee'      => -24,
+      'red_tracker'        => -12,
+      'category'           => -32,
+      'fixed_version'      => -16,
+      'jira_reporter'      => -16,
+      'jira_assignee'      => -16,
     }
 
     attr_reader  :jira_summary, :jira_description, :jira_reporter, :jira_environment#, :jira_project
@@ -507,7 +509,7 @@ module JiraMigration
     def self.parse(xpath = '/*/Issue')
       #objs = super(xpath)
       objs = []
-      nodes = $doc.xpath('/*/Issue').collect{|i|i}.sort{|a,b|a.attribute('id').to_s<=>b.attribute('id').to_s}
+      nodes = $doc.xpath('/*/Issue').collect{|i|i}
       #nodes.collect{|i|i}.sort{|a,b|a.attribute('id').to_s<=>b.attribute('id').to_s}
       puts "XML entities = #{nodes.size}"
         
@@ -519,6 +521,9 @@ module JiraMigration
         nodes.delete_if{|i| i['key'] !~ /^#{$JIRA_KEY_FILTER}$/ }
       end
       puts "Filtered entities = #{nodes.size}"
+
+      # Sort on keys
+      nodes = nodes.sort{|a,b|a.attribute('key').to_s.sub(/^[^-]+-/, '').to_i<=>b.attribute('key').to_s.sub(/^[^-]+-/, '').to_i}
       
       nodes.each do |node|
         $MAP_JIRA_ISSUE_ID_TO_KEY[node['id']] = node['key']
@@ -527,6 +532,37 @@ module JiraMigration
       end
 
       puts "Objects size = #{objs.size}"
+
+      # Load associations between issues and components/categories
+      categories = $doc.xpath("/*/NodeAssociation[@sourceNodeEntity=\"Issue\" and @sinkNodeEntity=\"Component\" and @associationType=\"IssueComponent\"]").collect{|i|i}
+      puts "Extracted #{categories.size} associations between issues and components"
+      # Filter for relevant issues only
+      categories.delete_if{|i| $MAP_JIRA_ISSUE_ID_TO_KEY[i['sourceNodeId']].nil? }
+      puts "Reduced to #{categories.size} associations"
+      # Sort on category id to keep only the last one
+      categories = categories.sort{|a,b|a.attribute('sinkNodeId').to_s.to_i<=>b.attribute('sinkNodeId').to_s.to_i}
+      # Save the result for later usage, when relevant
+      categories.each do |assoc|
+        # Store only if component has been migrated
+        $MAP_JIRA_ISSUE_KEY_RED_CATEGORY[$MAP_JIRA_ISSUE_ID_TO_KEY[assoc['sourceNodeId']]] = assoc["sinkNodeId"] unless JiraComponent::MAP[assoc["sinkNodeId"]].nil?
+      end
+      puts "Saved only #{$MAP_JIRA_ISSUE_KEY_RED_CATEGORY.size} associations"
+
+      # Load associations between issues and fixed versions
+      versions = $doc.xpath("/*/NodeAssociation[@sourceNodeEntity=\"Issue\" and @sinkNodeEntity=\"Version\" and @associationType=\"IssueFixVersion\"]").collect{|i|i}
+      puts "Extracted #{versions.size} associations between issues and fixed versions"
+      # Filter for relevant issues only
+      versions.delete_if{|i| $MAP_JIRA_ISSUE_ID_TO_KEY[i['sourceNodeId']].nil? }
+      puts "Reduced to #{versions.size} associations"
+      # Sort on version id to keep only the last one
+      versions = versions.sort{|a,b|a.attribute('sinkNodeId').to_s.to_i<=>b.attribute('sinkNodeId').to_s.to_i}
+      # Save the result for later usage, when relevant
+      versions.each do |assoc|
+        # Store only if version has been migrated
+        $MAP_JIRA_ISSUE_KEY_RED_VERSION[$MAP_JIRA_ISSUE_ID_TO_KEY[assoc['sourceNodeId']]] = assoc["sinkNodeId"] unless JiraVersion::MAP[assoc["sinkNodeId"]].nil?
+      end
+      puts "Saved only #{$MAP_JIRA_ISSUE_KEY_RED_VERSION.size} associations"
+
       return objs
     end
 
@@ -542,14 +578,44 @@ module JiraMigration
       JiraProject::MAP[self.jira_project]
     end
 
-    def red_fixed_version
-      # Implemented in a later separated step for better performance
-      nil
+    def red_category_id
+      # Only process relevant assoc (should be nil if project is ignored)
+      category = JiraComponent::MAP[$MAP_JIRA_ISSUE_KEY_RED_CATEGORY[self.jira_key]]
+      if !category.nil?
+        category.id
+      else
+        nil
+      end
     end
 
-    def red_category
-      # Implemented in a later separated step for better performance
-      nil
+    # Only to print text rather than id
+    def category
+      category = JiraComponent::MAP[$MAP_JIRA_ISSUE_KEY_RED_CATEGORY[self.jira_key]]
+      if !category.nil?
+        category.name
+      else
+        nil
+      end
+    end
+
+    def red_fixed_version_id
+      # Only process relevant assoc (should be nil if project is ignored)
+      version = JiraVersion::MAP[$MAP_JIRA_ISSUE_KEY_RED_VERSION[self.jira_key]]
+      if !version.nil?
+        version.id
+      else
+        nil
+      end
+    end
+
+    # Only to print text rather than id
+    def fixed_version
+      version = JiraVersion::MAP[$MAP_JIRA_ISSUE_KEY_RED_VERSION[self.jira_key]]
+      if !version.nil?
+        version.name
+      else
+        nil
+      end
     end
 
     def red_subject
@@ -614,6 +680,12 @@ module JiraMigration
         Member.create(:user => assignee, :project => project, :roles => [ROLE_MAPPING['developer']])
         project.reload
         assignee.reload
+      end
+      version = JiraVersion::MAP[$MAP_JIRA_ISSUE_KEY_RED_VERSION[self.jira_key]]
+      # Make sure the version is open for validation
+      if !version.nil? && version.status != 'open'
+        version.update_column(:status, 'open')
+        version.reload
       end
     end
 
@@ -931,6 +1003,10 @@ module JiraMigration
   # Mapping of Jira id to Jira key to filter many objects and speed up attachment processing
   $MAP_JIRA_PROJECT_ID_TO_KEY = {}
   $MAP_JIRA_ISSUE_ID_TO_KEY = {}
+  
+  # Mapping associations of Jira issues with fixed version and component/category to avoid later disk I/O
+  $MAP_JIRA_ISSUE_KEY_RED_VERSION = {}
+  $MAP_JIRA_ISSUE_KEY_RED_CATEGORY = {}
 
   ##########################
   # gets all mapping options
@@ -989,120 +1065,6 @@ module JiraMigration
       ret.push(Hash[node.attributes.map { |k,v| [k,v.content]}])}
       #ret.push(node.attributes.rehash)}
     return ret
-  end
-
-  #################################
-  def self.migrate_fixed_versions()
-    path = "/*/NodeAssociation[@sourceNodeEntity=\"Issue\" and @sinkNodeEntity=\"Version\" and @associationType=\"IssueFixVersion\"]"
-    assocs = JiraMigration.get_list_from_tag(path)
-
-    puts "Migrating #{assocs.size} associations between issues and fixed versions"
-
-    sep = 82
-    vsep = " \\ "
-    hsep = '\\'
-
-    # Print header
-    1.upto(sep).each { putc(hsep) }
-    puts
-    printf("%12.12s#{vsep}%12.12s#{vsep}%-24.24s#{vsep}%-10.10s#{vsep}%12.12s\n",
-      'jira_version',
-      'jira_issue',
-      'jira_name',
-      'status',
-      'red_id')
-    1.upto(sep).each { putc(hsep) }
-    puts
-      
-    # Print attributes
-    assocs.each do |assoc|
-      version = JiraVersion::MAP[assoc['sinkNodeId']]
-      # Only process relevant assoc (should be nil if project is ignored)
-      if !version.nil?
-    	issue = JiraIssue::MAP[assoc['sourceNodeId']]
-      	if !issue.nil?
-      	  status = 'exists'
-      	  if issue.fixed_version_id.nil?
-      	    status = 'created'
-      	  elsif issue.fixed_version_id > version.id
-            # Redmine fixed_version is unique, unlike in JIRA
-            # So we choose to use the lowest id (sort of first version where it has been fixed)
-      	    status = 'udpated'
-      	  end
-
-          printf("%12.12s#{vsep}%12.12s#{vsep}%-24.24s#{vsep}%-10.10s#{vsep}%12.12s\n",
-            assoc['sinkNodeId'].to_s,
-            assoc['sourceNodeId'].to_s,
-            version['name'],
-            status,
-            issue.id.to_s,
-          )
-          issue.update_column(:fixed_version_id, version.id) unless status == 'exists'
-          issue.reload
-        end
-      end
-    end
-    
-    # Print footer
-    1.upto(sep).each { putc(hsep) }
-    puts
-  end
-
-  #################################
-  def self.migrate_categories()
-    path = "/*/NodeAssociation[@sourceNodeEntity=\"Issue\" and @sinkNodeEntity=\"Component\" and @associationType=\"IssueComponent\"]"
-    assocs = JiraMigration.get_list_from_tag(path)
-
-    puts "Migrating #{assocs.size} associations between issues and categories"
-
-    sep = 82
-    vsep = " \\ "
-    hsep = '\\'
-
-    # Print header
-    1.upto(sep).each { putc(hsep) }
-    puts
-    printf("%12.12s#{vsep}%12.12s#{vsep}%-24.24s#{vsep}%-10.10s#{vsep}%12.12s\n",
-      'jira_id',
-      'jira_component',
-      'jira_name',
-      'status',
-      'red_id')
-    1.upto(sep).each { putc(hsep) }
-    puts
-      
-    # Print attributes
-    assocs.each do |assoc|
-      category = JiraComponent::MAP[assoc["sinkNodeId"]]
-      # Only process relevant assoc (should be nil if project is ignored)
-      if !category.nil?
-      issue = JiraIssue::MAP[assoc['sourceNodeId']]
-        if !issue.nil?
-          status = 'exists'
-          if issue.category_id.nil?
-            status = 'created'
-          elsif issue.category_id < category.id
-            # Redmine category_id is unique, unlike component in JIRA
-            # So we choose to use the highest id (sort of last related component)
-            status = 'udpated'
-          end
-
-          printf("%12.12s#{vsep}%12.12s#{vsep}%-24.24s#{vsep}%-10.10s#{vsep}%12.12s\n",
-            assoc['sinkNodeId'].to_s,
-            assoc['sourceNodeId'].to_s,
-            category['name'],
-            status,
-            issue.id.to_s,
-          )
-          issue.update_column(:category_id, category.id)
-          issue.reload
-        end
-      end
-    end
-
-    # Print footer
-    1.upto(sep).each { putc(hsep) }
-    puts
   end
 
   #############################
@@ -1594,9 +1556,7 @@ namespace :jira_migration do
     created = JiraMigration.migrate(issues, attrf)
     puts "Migrated issues (#{created}/#{issues.size})"
 
-    # TODO: Implement this is JiraIssue::post_migrate, if possible
-    JiraMigration.migrate_fixed_versions
-    JiraMigration.migrate_categories
+    # TODO: Implement this is JiraIssue, if possible (like fixed_version and category)
     JiraMigration.migrate_issue_links
     JiraMigration.migrate_worktime
   end
