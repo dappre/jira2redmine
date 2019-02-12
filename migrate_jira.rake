@@ -431,7 +431,7 @@ module JiraMigration
 
       # Add JIRA key as Redmine custom field
       obj = self.new({
-        'name'                   => 'Key',
+        'name'                   => KEY_FIELD,
         'customfieldtypekey'     => 'com.atlassian.jira.plugin.system.customfieldtypes:textfield',
         'customfieldsearcherkey' => 'com.atlassian.jira.plugin.system.customfieldtypes:textsearcher',
       })
@@ -439,7 +439,7 @@ module JiraMigration
 
       # Add JIRA environment as Redmine custom field
       obj = self.new({
-        'name'                   => 'Environment',
+        'name'                   => ENV_FIELD,
         'customfieldtypekey'     => 'com.atlassian.jira.plugin.system.customfieldtypes:textarea',
         'customfieldsearcherkey' => 'com.atlassian.jira.plugin.system.customfieldtypes:textsearcher',
       })
@@ -594,7 +594,7 @@ module JiraMigration
 
     def retrieve
       # Retrieve existing issue based on Key Custom Field
-      custom_field = IssueCustomField.find_by_name('Key')
+      custom_field = IssueCustomField.find_by_name(KEY_FIELD)
       custom_value = CustomValue.where("custom_field_id = '#{custom_field.id}' AND customized_type = 'Issue' AND value = '#{self.jira_key}'").last
       Issue.find_by_id(custom_value.customized_id) unless custom_value.nil?
     end
@@ -718,24 +718,51 @@ module JiraMigration
     def post_migrate(new_record, is_new)
       if is_new
         # Migrate Key as Custom Field Value
-        custom_field = IssueCustomField.find_by_name('Key')
+        custom_field = IssueCustomField.find_by_name(KEY_FIELD)
+        # Lookup if value already exists
         v = CustomValue.find_by(
           :custom_field_id => custom_field.id,
           :customized_type => 'Issue',
           :customized_id   => new_record.id,
         )
-        v.value = self.jira_key
-        v.save
+        if v.nil?
+          # Create value if needed
+          v = CustomValue.create(
+            :custom_field_id => custom_field.id,
+            :customized_type => 'Issue',
+            :customized_id   => new_record.id,
+            :value           => self.jira_key,
+          )
+          v.save
+        elsif v.value != self.jira_key
+          # Update value if needed
+          v.value = self.jira_key
+          v.save
+        end
+        
         # Migrate environment as Custom Field Value
         unless self.jira_environment.nil? || self.jira_environment.empty?
-          custom_field = IssueCustomField.find_by_name('Environment')
+          custom_field = IssueCustomField.find_by_name(ENV_FIELD)
+          # Lookup if value already exists
           v = CustomValue.find_by(
             :custom_field_id => custom_field.id,
             :customized_type => 'Issue',
             :customized_id   => new_record.id,
           )
-          v.value = self.jira_environment
-          v.save
+          if v.nil?
+            # Create value if needed
+            v = CustomValue.create(
+              :custom_field_id => custom_field.id,
+              :customized_type => 'Issue',
+              :customized_id   => new_record.id,
+              :value           => self.jira_environment,
+            )
+            v.save
+          elsif v.value != self.jira_environment
+            # Update value if needed
+            v.value = self.jira_environment
+            v.save
+          end
         end
       end
       new_record.update_column :updated_on, Time.parse(self.jira_updated)
@@ -987,7 +1014,7 @@ module JiraMigration
       #''                                                                => 'Boolean', # Checkbox
       'com.pyxis.greenhopper.jira:greenhopper-ranking'                   => 'float',   # Numeric
       'com.atlassian.jira.plugin.system.customfieldtypes:float'          => 'float',   # Float
-      'com.atlassian.jira.plugin.system.customfieldtypes:textfield'      => 'text',    # String
+      'com.atlassian.jira.plugin.system.customfieldtypes:textfield'      => 'string',  # String
       'com.atlassian.jira.plugin.system.customfieldtypes:url'            => 'link',    # URL
       'com.atlassian.jira.plugin.system.customfieldtypes:userpicker'     => 'user',    # Single user
       'com.atlassian.jira.plugin.system.customfieldtypes:textarea'       => 'text',    # Long text
@@ -996,6 +1023,10 @@ module JiraMigration
       #''                                                                => 'Date',    # Date
       #''                                                                => 'Version', # Version
   }
+
+  # Name of Redmine Custom Fields to migrate Key and Environment attributes from Jira issues
+  KEY_FIELD = 'Alias'
+  ENV_FIELD = 'Environment'
 
   # Xml file holder
   $doc = nil
