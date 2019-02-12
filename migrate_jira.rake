@@ -23,13 +23,8 @@ module JiraMigration
   $JIRA_KEY_FILTER = nil
   ############## Pretty print objects while testing
   $PP = false
-
-  roles = Role.where(:builtin => 0).order('position ASC').all
-  ROLE_MAPPING = {
-    'admin'     => roles[0],
-    'developer' => roles[1],
-  }
-  DEFAULT_ROLE = roles.last
+  ############## Change project identifier here if needed (ex: { 'TST' => 'test'. } )
+  MAP_PRJ_CODE_JIRA_TO_RED = {}
 
   ################################
   # Base class for any JIRA object
@@ -124,12 +119,15 @@ module JiraMigration
 
       record.reload
 
+      # Save the ActiveRecord in a MAP
       self.map[self.jira_id] = record
+      # And in this object instance
       self.new_record = record
+      # Call port_migrate if relevant
       if self.respond_to?('post_migrate')
         self.post_migrate(record, self.is_new)
       end
-	  
+
       record.reload
       return record
     end
@@ -210,9 +208,9 @@ module JiraMigration
   	  else
   	    return 1 #unlock by default
   	  end
-	  end
+    end
 
-	  def before_save(new_record)
+    def before_save(new_record)
       new_record.login = red_login
       if new_record.new_record?
         new_record.salt_password('Pa$$w0rd')
@@ -248,6 +246,12 @@ module JiraMigration
       #<OSGroup id="10020" name="Devops"/>
       objs += super('/*/OSGroup') #if nodes.empty?
       puts "Objects size = #{objs.size}"
+
+      # Load roles from DB and save them in a Map for later usage
+      roles = Role.where(:builtin => 0).order('position ASC').all
+      $MAP_ROLES['admin'] = roles[0]
+      $MAP_ROLES['developer'] = roles[1]
+
       return objs
     end
 
@@ -315,8 +319,8 @@ module JiraMigration
     end
 
     def red_identifier
-      ret = self.jira_key.downcase
-      return ret
+      # Returns identifier from the Map or the downcased Jira key
+      MAP_PRJ_CODE_JIRA_TO_RED[self.jira_key] || self.jira_key.downcase
     end
   end
 
@@ -466,6 +470,16 @@ module JiraMigration
       end
       new_record.reload
     end
+#
+#    def post_migrate(new_record, is_new)
+#      # Allow this field for all Trackers if not already done
+#      new_record.trackers = Tracker.all if new_record.trackers.nil?
+#      # Allow this field for all migrated projects if not already done
+#      JiraProject::MAP.each do |jira_project, red_project|
+#        new_record.projects << red_project unless new_record.projects.include? red_project
+#      end
+#      new_record.reload
+#    end
   end
 
   ################################
@@ -510,7 +524,6 @@ module JiraMigration
       #objs = super(xpath)
       objs = []
       nodes = $doc.xpath('/*/Issue').collect{|i|i}
-      #nodes.collect{|i|i}.sort{|a,b|a.attribute('id').to_s<=>b.attribute('id').to_s}
       puts "XML entities = #{nodes.size}"
         
       # Process only relevant issues
@@ -522,9 +535,11 @@ module JiraMigration
       end
       puts "Filtered entities = #{nodes.size}"
 
-      # Sort on keys
+      # Sort on key numbers first
       nodes = nodes.sort{|a,b|a.attribute('key').to_s.sub(/^[^-]+-/, '').to_i<=>b.attribute('key').to_s.sub(/^[^-]+-/, '').to_i}
-      
+      # Then on projects codes
+      nodes = nodes.sort{|a,b|a.attribute('key').to_s.sub(/-[^-]+$/, '')<=>b.attribute('key').to_s.sub(/-[^-]+$/, '')}
+
       nodes.each do |node|
         $MAP_JIRA_ISSUE_ID_TO_KEY[node['id']] = node['key']
         issue = JiraIssue.new(node)
@@ -677,7 +692,7 @@ module JiraMigration
       project = JiraProject::MAP[self.jira_project]
       assignee = User.find_by_login(self.jira_assignee) unless self.jira_assignee.nil?
       if !assignee.nil? && !assignee.member_of?(project)
-        Member.create(:user => assignee, :project => project, :roles => [ROLE_MAPPING['developer']])
+        Member.create(:user => assignee, :project => project, :roles => [$MAP_ROLES['developer']])
         project.reload
         assignee.reload
       end
@@ -755,13 +770,9 @@ module JiraMigration
       query += " AND created_on = '#{self.jira_created}'"
       records = Journal.where(query)
       unless records.nil?
-        if records.size == 1
-          record = records[0]
-        elsif records.size > 1
-          # Only compare text if we got more than one
-          records.each do |rec|
-            record = rec if rec.notes == self.red_notes
-          end
+        # Only compare text if same author comment at the same time
+        records.each do |rec|
+          record = rec if rec.notes == self.red_notes
         end
       end
       return record
@@ -1008,6 +1019,9 @@ module JiraMigration
   $MAP_JIRA_ISSUE_KEY_RED_VERSION = {}
   $MAP_JIRA_ISSUE_KEY_RED_CATEGORY = {}
 
+  # Mapping of user roles
+  $MAP_ROLES = {}
+  
   ##########################
   # gets all mapping options
   def self.get_all_options()
