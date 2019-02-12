@@ -220,6 +220,7 @@ module JiraMigration
     def post_migrate(new_record, is_new)
       if is_new
         new_record.update_attribute(:must_change_passwd, true)
+        new_record.update_attribute(:mail_notification, 'none') # No email by default
         new_record.reload
       end
     end
@@ -395,8 +396,8 @@ module JiraMigration
     end
 
     def red_assigned_to_id
-      if self.jira_assignee
-        JiraMigration.find_user_by_jira_name(self.jira_assignee)
+      if self.jira_lead
+        JiraMigration.find_user_by_jira_name(self.jira_lead).id 
       else
         nil
       end
@@ -457,18 +458,28 @@ module JiraMigration
       return $confs["custom_field_types"][self.jira_customfieldtypekey]
     end
 
-    def retrieve
-      self.class::DEST_MODEL.find_by_name(self.jira_name)
+    def red_is_filter
+      return 1
     end
 
-    def post_migrate(new_record, is_new)
-      # Allow this field for all Trackers if not already done
-      new_record.trackers = Tracker.all if new_record.trackers.nil?
-      # Allow this field for all migrated projects if not already done
+    def red_searchable
+      return 1
+    end
+
+    def red_trackers
+      Tracker.all
+    end
+
+    def red_projects
+      projects = []
       JiraProject::MAP.each do |jira_project, red_project|
-        new_record.projects << red_project unless new_record.projects.include? red_project
+        projects << red_project unless projects.include? red_project
       end
-      new_record.reload
+      return projects
+    end
+
+    def retrieve
+      self.class::DEST_MODEL.find_by_name(self.jira_name)
     end
 #
 #    def post_migrate(new_record, is_new)
