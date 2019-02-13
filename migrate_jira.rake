@@ -15,14 +15,12 @@ module JiraMigration
   ENTITIES_FILE = 'entities.xml'
   ############## Location of jira attachements
   JIRA_ATTACHMENTS_DIR = 'data/attachments'
-  ############## Jira URL
-  $JIRA_WEB_URL = nil
   ############## Project filter (ex: 'MYPRJ' or '(MYPRJA|MYPRJB)'
-  $JIRA_PRJ_FILTER = nil
+  JIRA_PRJ_FILTER = nil
   ############## Issue key filter (ex: '[^-]+-\d{1,2}' or '(MYPRJA-\d+|MYPRJB-\d{1,2})'
-  $JIRA_KEY_FILTER = nil
+  JIRA_KEY_FILTER = nil
   ############## Pretty print objects while testing
-  $PP = false
+  PP = false
   ############## Change project identifier here if needed (ex: { 'TST' => 'test'. } )
   MAP_PRJ_CODE_JIRA_TO_RED = {}
 
@@ -282,8 +280,8 @@ module JiraMigration
     def self.parse(xpath = '/*/Project')
       objs = super(xpath)
       # Filter projects if required
-      if !$JIRA_PRJ_FILTER.nil?
-        objs.delete_if{|obj| obj.jira_key !~ /^#{$JIRA_PRJ_FILTER}$/ }
+      if !JIRA_PRJ_FILTER.nil?
+        objs.delete_if{|obj| obj.jira_key !~ /^#{JIRA_PRJ_FILTER}$/ }
       end
       # Saving Jira id and key in a Map for later optimisation
       objs.each do |obj|
@@ -538,11 +536,11 @@ module JiraMigration
       puts "XML entities = #{nodes.size}"
         
       # Process only relevant issues
-      unless $JIRA_PRJ_FILTER.nil?
-        nodes.delete_if{|i| i['key'] !~ /^#{$JIRA_PRJ_FILTER}\-\d+$/ }
+      unless JIRA_PRJ_FILTER.nil?
+        nodes.delete_if{|i| i['key'] !~ /^#{JIRA_PRJ_FILTER}\-\d+$/ }
       end
-      unless $JIRA_KEY_FILTER.nil?
-        nodes.delete_if{|i| i['key'] !~ /^#{$JIRA_KEY_FILTER}$/ }
+      unless JIRA_KEY_FILTER.nil?
+        nodes.delete_if{|i| i['key'] !~ /^#{JIRA_KEY_FILTER}$/ }
       end
       puts "Filtered entities = #{nodes.size}"
 
@@ -1639,56 +1637,56 @@ namespace :jira_migration do
   desc "Just pretty print Jira Projects on screen"
   task :test_parse_projects => :environment do
     projects = JiraMigration::JiraProject.parse
-    projects.each {|p| pp(p.run_all_redmine_fields) } if $PP
+    projects.each {|p| pp(p.run_all_redmine_fields) } if PP
   end
 
   desc "Just pretty print Jira Users on screen"
   task :test_parse_users => :environment do
     # TODO: Rework to use JiraUser::parse
     users = JiraMigration.parse_jira_users()
-    users.each {|u| pp( u.run_all_redmine_fields) } if $PP
+    users.each {|u| pp( u.run_all_redmine_fields) } if PP
   end
 
   desc "Just pretty print Jira Groups on screen"
   task :test_parse_groups => :environment do
     groups = JiraMigration::JiraGroup.parse
-    groups.each {|g| pp( g.run_all_redmine_fields) } if $PP
+    groups.each {|g| pp( g.run_all_redmine_fields) } if PP
   end
 
   desc "Just pretty print Jira Versions on screen"
   task :test_parse_versions => :environment do
     versions = JiraMigration::JiraVersion.parse
-    versions.each {|c| pp( c.run_all_redmine_fields) } if $PP
+    versions.each {|c| pp( c.run_all_redmine_fields) } if PP
   end
 
   desc "Just pretty print Jira Components on screen"
   task :test_parse_components => :environment do
     categories = JiraMigration::JiraComponent.parse
-    categories.each {|c| pp( c.run_all_redmine_fields) } if $PP
+    categories.each {|c| pp( c.run_all_redmine_fields) } if PP
   end
 
   desc "Just pretty print Jira Custom Fields on screen"
   task :test_parse_custom_fields => :environment do
     fields = JiraMigration::JiraCustomField.parse
-    fields.each {|c| pp( c.run_all_redmine_fields) } if $PP
+    fields.each {|c| pp( c.run_all_redmine_fields) } if PP
   end
 
   desc "Just pretty print Jira Issues on screen"
   task :test_parse_issues => :environment do
     issues = JiraMigration::JiraIssue.parse
-    issues.each {|i| pp( i.run_all_redmine_fields) } if $PP
+    issues.each {|i| pp( i.run_all_redmine_fields) } if PP
   end
 
   desc "Just pretty print Jira Comments on screen"
   task :test_parse_comments => :environment do
     comments = JiraMigration::JiraComment.parse
-    comments.each {|c| pp( c.run_all_redmine_fields) } if $PP
+    comments.each {|c| pp( c.run_all_redmine_fields) } if PP
   end
 
   desc "Just pretty print Jira Attachments on screen"
   task :test_parse_attachments => :environment do
     attachs = JiraMigration::JiraAttachment.parse
-    attachs.each {|i| pp( i.run_all_redmine_fields) } if $PP
+    attachs.each {|i| pp( i.run_all_redmine_fields) } if PP
   end
 
   ##################################### Running all tests ##########################################

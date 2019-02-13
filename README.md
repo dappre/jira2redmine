@@ -22,10 +22,16 @@ Change the variables in top of the file to reflect the backup files
 ```
   ENTITIES_FILE = 'tmp/JIRA-backup-XXXXXXXX/entities.xml'
   JIRA_ATTACHMENTS_DIR = 'tmp/JIRA-backup-XXXXXXXX/data/attachments'
-  $JIRA_WEB_URL = 'https://<unix-url>.atlassian.net'
+  JIRA_PRJ_FILTER = '(TEST|DEMO)'
+  JIRA_KEY_FILTER = '[^-]+-\d{1,2}'
+  PP = false
+  MAP_PRJ_CODE_JIRA_TO_RED = {
+    'TEST'   => 'tst',
+    'DEMO'   => 'dem',
+  }
 ```
 
-and the execute the following:
+And the execute the following:
 
 ```
 rake jira_migration:test_all_migrations RAILS_ENV="production"
