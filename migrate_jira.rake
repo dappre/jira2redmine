@@ -279,6 +279,17 @@ module JiraMigration
     }
 
     attr_accessor :jira_project
+    attr_reader  :jira_description, :jira_lead
+
+    def initialize(node)
+      super
+      if @tag.at('description')
+        @jira_description = @tag.at('description').text
+      else
+        @jira_description = node['description'].to_s
+      end
+      @jira_lead = node['lead'].to_s unless node['lead'].nil? 
+    end
 
     def self.parse(xpath = '/*/Project')
       objs = super(xpath)
@@ -323,6 +334,16 @@ module JiraMigration
     def red_identifier
       # Returns identifier from the Map or the downcased Jira key
       MAP_PRJ_CODE_JIRA_TO_RED[self.jira_key] || self.jira_key.downcase
+    end
+
+    def post_migrate(new_record, is_new)
+      # Make sure the lead of the project is a member as manager
+      lead = JiraMigration.find_user_by_jira_name(self.jira_lead) unless self.jira_lead.nil? || self.jira_lead.empty? 
+      unless lead.nil? || lead.member_of?(new_record)
+        Member.create(:user => lead, :project => new_record, :roles => [$MAP_ROLES['manager']])
+        new_record.reload
+        lead.reload
+      end
     end
   end
 
@@ -396,16 +417,21 @@ module JiraMigration
       self.encode_for(self.jira_name, 'name')
     end
 
-    def red_assigned_to_id
-      if self.jira_lead
-        JiraMigration.find_user_by_jira_name(self.jira_lead).id 
-      else
-        nil
-      end
+    def red_assigned_to
+      JiraMigration.find_user_by_jira_name(self.jira_lead) unless self.jira_lead.nil? || self.jira_lead.empty?
     end
 
     def retrieve
       self.class::DEST_MODEL.find_by_name(self.jira_name)
+    end
+
+    def before_save(new_record)
+      # Make sure the assignee is a member of the project as developer
+      unless self.red_assigned_to.nil? || self.red_assigned_to.member_of?(self.red_project)
+        Member.create(:user => self.red_assigned_to, :project => self.red_project, :roles => [$MAP_ROLES['developer']])
+        self.red_project.reload
+        self.red_assigned_to.reload
+      end
     end
   end
 
@@ -691,12 +717,24 @@ module JiraMigration
     end
 
     def before_save(new_record)
-      project = JiraProject::MAP[self.jira_project]
-      assignee = User.find_by_login(self.jira_assignee) unless self.jira_assignee.nil?
-      if !assignee.nil? && !assignee.member_of?(project)
-        Member.create(:user => assignee, :project => project, :roles => [$MAP_ROLES['developer']])
-        project.reload
-        assignee.reload
+      # Make sure the tracker is allowed for this project 
+      unless self.red_project.trackers.include?(self.red_tracker)
+        self.red_project.trackers << self.red_tracker
+        self.red_project.reload
+      end
+      # Make sure the author is a member of the project as reporter
+      # TODO: check if already member AND with the targeted role
+      # As the author might alreayd be a manager or a developer (no biggy)
+      unless self.red_author.nil? || self.red_author.member_of?(self.red_project)
+        Member.create(:user => self.red_author, :project => self.red_project, :roles => [$MAP_ROLES['reporter']])
+        self.red_project.reload
+        self.red_author.reload
+      end
+      # Make sure the assignee is a member of the project as developer
+      unless self.red_assigned_to.nil? || self.red_assigned_to.member_of?(self.red_project)
+        Member.create(:user => self.red_assigned_to, :project => self.red_project, :roles => [$MAP_ROLES['developer']])
+        self.red_project.reload
+        self.red_assigned_to.reload
       end
       version = JiraVersion::MAP[$MAP_JIRA_ISSUE_KEY_RED_VERSION[self.jira_key]]
       # Make sure the version is open for validation
