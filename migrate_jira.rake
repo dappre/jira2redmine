@@ -43,6 +43,7 @@ module JiraMigration
     end
 
     def self.parse(xpath)
+      puts "Parsing XML for #{self.class.name} objects"
       # Parse XML nodes into Hashes
       nodes = $doc.xpath(xpath).collect{|i|i}.sort{|a,b|a.attribute('id').to_s<=>b.attribute('id').to_s}
       puts "XML entities = #{nodes.size}"
@@ -94,6 +95,7 @@ module JiraMigration
       #pp('Saving:', all_fields)
 
       record = self.retrieve
+      # TODO: Avoid update query if fields are unchanged
       if record
         record.update_attributes(all_fields)
       else
@@ -201,11 +203,11 @@ module JiraMigration
     end
 
     def red_status
-  	  if (!self.jira_active.nil? && self.jira_active.to_s != '1')
-  	    return 3 #locked user
-  	  else
-  	    return 1 #unlock by default
-  	  end
+      if (!self.jira_active.nil? && self.jira_active.to_s != '1')
+        return 3 #locked user
+      else
+        return 1 #unlock by default
+      end
     end
 
     def before_save(new_record)
@@ -248,8 +250,9 @@ module JiraMigration
 
       # Load roles from DB and save them in a Map for later usage
       roles = Role.where(:builtin => 0).order('position ASC').all
-      $MAP_ROLES['admin'] = roles[0]
+      $MAP_ROLES['manager']   = roles[0]
       $MAP_ROLES['developer'] = roles[1]
+      $MAP_ROLES['reporter']  = roles[2] 
 
       return objs
     end
@@ -424,6 +427,7 @@ module JiraMigration
 
     def self.parse(xpath = '/*/CustomField')
       # TODO: implement CustomValue migration before uncommenting
+      puts "Parsing XML for #{self.class.name} objects"
       #objs = super(xpath)
       objs = []
 
@@ -465,10 +469,12 @@ module JiraMigration
     end
 
     def red_trackers
+      # Allow this field for all Trackers by default
       Tracker.all
     end
 
     def red_projects
+      # Allow this field for all migrated projects
       projects = []
       JiraProject::MAP.each do |jira_project, red_project|
         projects << red_project unless projects.include? red_project
@@ -479,16 +485,6 @@ module JiraMigration
     def retrieve
       self.class::DEST_MODEL.find_by_name(self.jira_name)
     end
-#
-#    def post_migrate(new_record, is_new)
-#      # Allow this field for all Trackers if not already done
-#      new_record.trackers = Tracker.all if new_record.trackers.nil?
-#      # Allow this field for all migrated projects if not already done
-#      JiraProject::MAP.each do |jira_project, red_project|
-#        new_record.projects << red_project unless new_record.projects.include? red_project
-#      end
-#      new_record.reload
-#    end
   end
 
   ################################
@@ -506,7 +502,7 @@ module JiraMigration
       'jira_assignee'      => -16,
     }
 
-    attr_reader  :jira_summary, :jira_description, :jira_reporter, :jira_environment#, :jira_project
+    attr_reader  :jira_summary, :jira_description, :jira_reporter, :jira_environment, :jira_assignee
 
     def initialize(node)
       super
@@ -521,7 +517,7 @@ module JiraMigration
         @jira_description = node['description'].to_s
       end
       @jira_reporter = node['reporter'].to_s
-      @jira_assignee = node['assignee'].to_s
+      @jira_assignee = node['assignee'].to_s unless node['assignee'].nil? 
       if @tag.at('environment')
         @jira_environment = @tag.at('environment').text
       else
@@ -530,7 +526,7 @@ module JiraMigration
     end
 
     def self.parse(xpath = '/*/Issue')
-      #objs = super(xpath)
+      puts "Parsing XML for #{self.class.name} objects"
       objs = []
       nodes = $doc.xpath('/*/Issue').collect{|i|i}
       puts "XML entities = #{nodes.size}"
@@ -645,7 +641,7 @@ module JiraMigration
     def red_subject
       self.encode_for(self.jira_summary, 'subject')
     end
-	
+  
     def red_description
       self.encode_for(self.jira_description, 'description')
     end
@@ -690,11 +686,7 @@ module JiraMigration
     end
 
     def red_assigned_to
-      if self.jira_assignee
-        JiraMigration.find_user_by_jira_name(self.jira_assignee)
-      else
-        nil
-      end
+      JiraMigration.find_user_by_jira_name(self.jira_assignee) unless self.jira_assignee.nil? || self.jira_assignee.empty?
     end
 
     def before_save(new_record)
@@ -819,7 +811,7 @@ module JiraMigration
     end
 
     def red_created_on
-      DateTime.parse(self.jira_created)
+      Time.parse(self.jira_created)
     end
 
     def red_user
@@ -934,7 +926,7 @@ module JiraMigration
     # end
 
     def red_created_on
-      DateTime.parse(self.jira_created)
+      Time.parse(self.jira_created)
     end
 
     def red_author
@@ -1209,19 +1201,19 @@ module JiraMigration
           query += " OR (issue_from_id = '#{issue_to.id}' AND issue_to_id = '#{issue_from.id}')"
           if IssueRelation.where(query).empty?
             r = IssueRelation.new(:relation_type => linktype, :issue_from => issue_from, :issue_to => issue_to)
-      		  puts "setting relation between: #{issue_from.id} to: #{issue_to.id}"
-      		  begin
-      		    r.save!
-      		    r.reload
-      		  rescue Exception => e
-      		    puts "FAILED setting #{linktype} relation from: #{issue_from.id} to: #{issue_to.id} because of #{e.message}"
-      		  end
+            puts "setting relation between: #{issue_from.id} to: #{issue_to.id}"
+            begin
+              r.save!
+              r.reload
+            rescue Exception => e
+              puts "FAILED setting #{linktype} relation from: #{issue_from.id} to: #{issue_to.id} because of #{e.message}"
+            end
             other += 1
             puts "created"
           else
             puts "exists" 
           end
-    		end
+        end
       end
     end
     puts("Migrated #{children} children + #{other} other issue links")
@@ -1314,12 +1306,12 @@ module JiraMigration
     $doc.xpath('/*/User').each do |node|
       if(node['emailAddress'] =~ /\A([^@\s]+)@((?:[-a-z0-9]+\.)+[a-z]{2,})\z/i)
         if !node['firstName'].to_s.empty? and !node['lastName'].to_s.empty? 
-		  user = JiraUser.new(node)
-		  user.jira_emailAddress = node["lowerEmailAddress"]
-		  user.jira_name = node["lowerUserName"]
-		  user.jira_active = node['active']
-		  #puts "Found JIRA user: #{user.jira_name}"
-		  users.push(user)
+          user = JiraUser.new(node)
+          user.jira_emailAddress = node["lowerEmailAddress"]
+          user.jira_name = node["lowerUserName"]
+          user.jira_active = node['active']
+          #puts "Found JIRA user: #{user.jira_name}"
+          users.push(user)
         end
       end
     end
@@ -1408,7 +1400,15 @@ module JiraMigration
         if att.nil?
           att_string = '-'
         else
-          att_string = att.to_s.each_line.first.chomp
+          begin
+            att_string = att.to_s.each_line.first.chomp
+          rescue
+            puts
+            pp('att_String: ', att_string)
+            pp('obj: ', obj)
+            raise
+            abort
+          end
         end
         printf("%#{format.to_s}.#{format.to_s.sub('-', '')}s#{vsep}", att_string)
       end
@@ -1416,6 +1416,8 @@ module JiraMigration
         obj.migrate
       rescue NoMethodError => e
         printf("%-8s#{vsep}%12s\n", 'NoMethod', '-')
+        puts
+        pp('obj: ', obj)
         raise
         abort
       end
