@@ -804,52 +804,35 @@ module JiraMigration
   end
 
   ##################################
-  # Specific class for JIRA comments (= journal in Redmine)
-  class JiraComment < BaseJira
+  # Specific class for JIRA changes groups (= journals in Redmine)
+  class JiraChangeGroup < BaseJira
     DEST_MODEL = Journal
     MAP = {}
     ATTRF = {
       'jira_id'            => 12,
       'jira_issue'         => 12,
-      'jira_body'          => -56,
-      'jira_author'        => 16,
+      'jira_created'       => -19,
+      'jira_author'        => -16,
     }
-
-    attr_reader  :jira_body
 
     def initialize(node)
       super(node)
-      # get a body from a comment
-      # comment can have the comment body as an attribute or as a child tag
-      @jira_body = @tag["body"] || @tag.at("body").text
-      #@jira_body = node['body']
     end
 
-    def self.parse(xpath = '/*/Action[@type="comment"]')
+    def self.parse(xpath = '/*/ChangeGroup')
       objs = super(xpath)
       puts "Objects size = #{objs.size}"
       return objs
     end
 
     def retrieve
-      record = nil
       # Retrieve any existing ActiveRecord
       query = "journalized_id = '#{red_journalized.id}'"
       query += " AND journalized_type = 'Issue'"
       query += " AND user_id = '#{self.red_user.id}'"
       query += " AND created_on = '#{self.jira_created}'"
       records = Journal.where(query)
-      unless records.nil?
-        # Only compare text if same author comment at the same time
-        records.each do |rec|
-          record = rec if rec.notes == self.red_notes
-        end
-      end
-      return record
-    end
-
-    def red_notes
-      @jira_body
+      return records.last
     end
 
     def red_created_on
@@ -866,9 +849,220 @@ module JiraMigration
       JiraIssue::MAP[self.jira_issue]
     end
 
+    def red_notes
+      nil
+    end
+
     def post_migrate(new_record, is_new)
-      new_record.update_column :created_on, Time.parse(self.jira_created)
-      new_record.reload
+      if is_new
+        new_record.update_column :created_on, Time.parse(self.jira_created)
+        new_record.reload
+      end
+    end
+  end
+
+  ##################################
+  # Specific class for JIRA comments (= journals in Redmine)
+  class JiraComment < JiraChangeGroup
+    MAP = {}
+    ATTRF = {
+      'jira_id'            => 12,
+      'jira_issue'         => 12,
+      'red_notes'          => -48,
+      'red_created_on'     => -19,
+      'jira_author'        => -16,
+    }
+
+    attr_reader  :jira_body
+
+    def initialize(node)
+      super(node)
+      # comment can have the comment body as an attribute or as a child tag
+      @jira_body = @tag["body"] || @tag.at("body").text
+    end
+
+    def self.parse(xpath = '/*/Action[@type="comment"]')
+      objs = super(xpath)
+      puts "Objects size = #{objs.size}"
+      return objs
+    end
+
+    def red_notes
+      @jira_body
+    end
+  end
+
+  ##################################
+  # Specific class for JIRA changes (= journal_details in Redmine)
+  class JiraChangeItem < BaseJira
+    DEST_MODEL = JournalDetail
+    MAP = {}
+    ATTRF = {
+      'jira_id'            => 12,
+      'jira_group'         => 12,
+      'jira_field'         => -12,
+      'jira_oldstring'     => 16,
+      'jira_newstring'     => -16,
+      'red_old_value'      => 16,
+      'red_value'          => -16,
+    }
+
+    PROPKEY = {
+      # TODO: Support summary and description changes
+      # Uncommenting will break other property migration
+      #'summary'     => 'subject',
+      #'description' => 'description',
+      'issuetype'   => 'tracker_id',
+      'Issue Type'  => 'tracker_id',
+      'status'      => 'status_id',
+      'priority'    => 'priority_id',
+      'assignee'    => 'assigned_to_id',
+      'Component'   => 'category_id',
+      'Fix Version' => 'fixed_version_id',
+    }
+
+    #attr_reader  :jira_oldstring, :jira_newstring
+
+    def initialize(node)
+      super(node)
+      #if @tag['field'] == 'summary' || @tag['field'] == 'description' 
+        # get a body from an Action of comment type
+        # comment can have the comment body as an attribute or as a child tag
+        #@jira_oldstring = @tag["oldstring"] || @tag.at("oldstring").text
+        #@jira_newstring = @tag["newstring"] || @tag.at("newstring").text
+      #end
+    end
+
+    def self.parse(xpath = '/*/ChangeItem[@fieldtype="jira"]')
+      puts "Parsing XML for #{self.class.name} objects"
+      objs = []
+      nodes = $doc.xpath(xpath).collect{|i|i}
+      puts "XML entities = #{nodes.size}"
+
+      # Remove node if related group is not in the scope
+      unless nodes.size == 0 || nodes[0]['group'].nil?
+        puts "Skipping filtered issues"
+        nodes.delete_if{|node| JiraChangeGroup::MAP[node['group']].nil? || PROPKEY[node['field']].nil? }
+      end
+      puts "Filtered entities = #{nodes.size}"
+
+      # Merge ChangeItems related to the same field
+      # This will reduce the number of line for most changes
+      # TODO: This bloc should not be that slow when processing many changes
+      puts "Merging some changes when possible (this may take some time)"
+      nodes_old_only = nodes.select { |n| !n['oldvalue'].nil? && n['newvalue'].nil? }
+      nodes_new_only = nodes.select { |n| n['oldvalue'].nil? && !n['newvalue'].nil? }
+      
+      # Only if there is an old value/string w/o a new one
+      nodes_old_only.each do |node|
+        i = nil
+        # Extract same group changes with only newvalue
+        nodes_new_same_group = nodes_new_only.select{ |n| n['group'] == node['group'] } 
+        if nodes_new_same_group.size >= 1
+          # If relevant, remove changes for different field
+          nodes_new_same_group.keep_if{ |n| n['field'] == node['field'] }
+          # Get index of the first node in the global array, if any
+          i = nodes.index{ |n| n == nodes_new_same_group[0]} unless nodes_new_same_group.size == 0
+        end
+        # We can merge only one time, the other new value(s) will stay apart
+        unless i.nil?
+          nodes[i]['oldvalue'] = node['oldvalue']
+          nodes[i]['oldstring'] = node['oldstring']
+          node['oldvalue'] = ''
+          node['oldstring'] = ''
+          puts "Merge completed for field '#{nodes[i]['field']}' in change group #{nodes[i]['group']}: #{nodes[i]['oldstring']} -> #{nodes[i]['newstring']}"
+        end
+      end
+
+      # Keep only meaningful changes (from deleted to deleted is useless)
+      nodes.delete_if{ |n| n['oldvalue'] == '' && n['newvalue'].nil? }
+      nodes.each do |node|
+        entry = self.new(node)
+        objs.push(entry)
+      end
+
+      puts "Objects size = #{objs.size}"
+
+      return objs
+    end
+
+    def retrieve
+      # Retrieve any existing ActiveRecord
+      query = "journal_id = '#{red_journal_id}'"
+      query += " AND property = 'attr'"
+      query += " AND prop_key = '#{self.red_prop_key}'"
+      if self.red_old_value.nil?
+        query += " AND ( old_value is NULL"
+      else
+        query += " AND ( old_value = '#{self.red_old_value}'"
+      end
+      if self.red_value.nil?
+        query += " AND value is NULL )"
+      else
+        query += " AND value = '#{self.red_value}' )"
+      end
+      records = JournalDetail.where(query)
+      return records.last
+    end
+
+    def get_value(value, string)
+      val = nil
+      ref = nil
+      case self.red_prop_key
+      when 'tracker_id'
+        ref = $MIGRATED_ISSUE_TYPES[string]
+      when 'status_id'
+        ref = $MIGRATED_ISSUE_STATUS[string]
+      when 'priority_id'
+        ref = $MIGRATED_ISSUE_PRIORITIES[string]
+      when 'assigned_to_id'
+        ref = JiraMigration.find_user_by_jira_name(value) unless value.nil?
+      when 'category_id'
+        ref = JiraComponent::MAP[value]
+      when 'fixed_version_id'
+        ref = JiraVersion::MAP[value]
+      else
+        val = string
+      end
+      val = ref.id unless ref.nil?
+      return val
+    end
+
+    def red_journal_id
+      # retrieving the Rails object
+      JiraChangeGroup::MAP[self.jira_group].id unless JiraChangeGroup::MAP[self.jira_group].nil? 
+    end
+
+    def red_property
+      'attr'
+    end
+
+    def red_prop_key
+      PROPKEY[self.jira_field]
+    end
+
+    def red_old_value
+      self.get_value(self.jira_oldvalue, self.jira_oldstring)
+    end
+
+    def red_value
+      self.get_value(self.jira_newvalue, self.jira_newstring)
+    end
+
+    def post_migrate(new_recored, is_new)
+      if is_new
+        # Update closed_on timestamp of the related issue if relevant
+        # See Administration/Settings/Issue statuses to change (ex: Resolved is not closed by default)
+        closed_statuses = IssueStatus.where("is_closed = 1")
+        if self.jira_field == 'status' && closed_statuses.include?($MIGRATED_ISSUE_STATUS[self.jira_newstring]) 
+          group = JiraChangeGroup::MAP[self.jira_group]
+          issue = Issue.find_by_id(group.journalized_id)
+          unless issue.nil? || !issue.closed_on.nil?
+            issue.update_column :closed_on, group.created_on
+            issue.reload
+          end
+        end
+      end
     end
   end
 
@@ -1660,12 +1854,18 @@ namespace :jira_migration do
   end
 
   #######################################################################
-  desc "Migrates Jira Issues Comments to Redmine Issues Journals (Notes)"
-  task :migrate_comments => :environment do
-    comments = JiraMigration::JiraComment.parse
+  desc "Migrates Jira Issues Comments and Changes to Redmine Issues Journals"
+  task :migrate_comchgs => :environment do
+    comchgrps = JiraMigration::JiraComment.parse
+    comchgrps += JiraMigration::JiraChangeGroup.parse
+    comchgrps = comchgrps.sort{ |a,b| a.red_created_on.to_i<=>b.red_created_on.to_i}
     attrf = JiraMigration::JiraComment::ATTRF
-    created = JiraMigration.migrate(comments, attrf)
-    puts "Migrated comments (#{created}/#{comments.size})"
+    created = JiraMigration.migrate(comchgrps, attrf)
+    puts "Migrated comments and change groups (#{created}/#{comchgrps.size})"
+    chitems = JiraMigration::JiraChangeItem.parse
+    attrf = JiraMigration::JiraChangeItem::ATTRF
+    created = JiraMigration.migrate(chitems, attrf)
+    puts "Migrated comments and change items (#{created}/#{chitems.size})"
   end
 
   ##############################################################
@@ -1721,10 +1921,12 @@ namespace :jira_migration do
     issues.each {|i| pp( i.run_all_redmine_fields) } if PP
   end
 
-  desc "Just pretty print Jira Comments on screen"
-  task :test_parse_comments => :environment do
-    comments = JiraMigration::JiraComment.parse
-    comments.each {|c| pp( c.run_all_redmine_fields) } if PP
+  desc "Just pretty print Jira Comments and Changes on screen"
+  task :test_parse_comchgs => :environment do
+    comchgrps = JiraMigration::JiraComChGrp.parse
+    comchgrps.each {|c| pp( c.run_all_redmine_fields) } if PP
+    chitems = JiraMigration::JiraChangeItem.parse
+    chitems.each {|c| pp( c.run_all_redmine_fields) } if PP
   end
 
   desc "Just pretty print Jira Attachments on screen"
@@ -1743,7 +1945,7 @@ namespace :jira_migration do
     :test_parse_components,
     :test_parse_custom_fields,
     :test_parse_issues,
-    :test_parse_comments,
+    :test_parse_comchgs,
     :test_parse_attachments
   ] do
     puts "All parsers done! :-)"
@@ -1762,7 +1964,7 @@ namespace :jira_migration do
     :migrate_components,
     :migrate_custom_fields,
     :migrate_issues,
-    :migrate_comments,
+    :migrate_comchgs,
     :migrate_attachments
   ] do
     puts "All migrations done! :-)"
