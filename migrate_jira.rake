@@ -663,9 +663,10 @@ module JiraMigration
       self.jira_timeestimate.to_s.empty? ? 0 : self.jira_timeestimate.to_f / 3600
     end
 
-    # def red_start_date
-    #   Time.parse(self.jira_created)
-    # end
+    def red_start_date
+      # Use creation date as start date as Redmine proposed by default
+      Time.parse(self.jira_created)
+    end
 
     def red_due_date
       Time.parse(self.jira_resolutiondate) if self.jira_resolutiondate
@@ -755,9 +756,12 @@ module JiraMigration
           end
         end
       end
-      new_record.update_column :updated_on, Time.parse(self.jira_updated)
-      new_record.update_column :created_on, Time.parse(self.jira_created)
-      new_record.reload
+      if is_new 
+        new_record.update_column :updated_on, Time.parse(self.jira_updated)
+        new_record.update_column :created_on, Time.parse(self.jira_created)
+        new_record.update_column :closed_on, nil # Will be updated later will processing Changes
+        new_record.reload
+      end
     end
   end
 
